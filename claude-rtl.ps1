@@ -21,19 +21,22 @@
 
 .PARAMETER Mode
     Status         (default) -- print state of dev mode and Claude.
-    EnableDevMode  -- set allowDevTools=true in config.json (with confirmation).
+    Setup          -- one-shot: EnableDevMode + set CLAUDE_DEV_TOOLS env var +
+                       broadcast env change to Explorer + copy snippet to
+                       clipboard. Non-interactive; safe for automated installs.
+    EnableDevMode  -- set allowDevTools=true in config.json (auto-backup).
     DisableDevMode -- remove allowDevTools from config.json.
     CopySnippet    -- copy injection snippet to clipboard + show paste steps.
     PrintSnippet   -- print the snippet to stdout.
 
 .EXAMPLE
-    .\claude-rtl.ps1
-    Show current state.
+    .\claude-rtl.ps1 -Mode Setup
+    Recommended for first install. Idempotent and non-interactive. After it
+    runs, close Claude completely (including system tray) and reopen.
 
 .EXAMPLE
-    .\claude-rtl.ps1 -Mode EnableDevMode
-    Enable allowDevTools in config.json, then close Claude so the next launch
-    picks it up. After Claude restarts, press Ctrl+Alt+I to open DevTools.
+    .\claude-rtl.ps1
+    Show current state (read-only).
 
 .EXAMPLE
     .\claude-rtl.ps1 -Mode CopySnippet
@@ -42,9 +45,13 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet('Status','EnableDevMode','DisableDevMode','CopySnippet','PrintSnippet')]
+    [ValidateSet('Status','Setup','EnableDevMode','DisableDevMode','CopySnippet','PrintSnippet')]
     [string]$Mode = 'Status',
 
+    # Backwards-compat: no-op. Prompts have been removed; the script always
+    # proceeds because EnableDevMode/DisableDevMode are reversible, create
+    # timestamped backups, and the user already consented by specifying the
+    # mode explicitly.
     [switch]$NoConfirm,
 
     [string]$CssPath,
@@ -112,25 +119,35 @@ function Get-DevToolsState {
 function Set-AllowDevTools {
     param([bool]$Enable)
 
-    if (-not (Test-Path $ConfigPath)) {
-        throw "Config not found at $ConfigPath -- launch Claude at least once first."
+    $cfg = [ordered]@{}
+    $configDir = Split-Path -Parent $ConfigPath
+
+    if (-not (Test-Path $configDir)) {
+        # Roaming Claude profile doesn't exist yet (Claude was never launched).
+        # Create the directory so we can drop a minimal config.json. Claude
+        # will read it on first launch and add its own keys.
+        New-Item -ItemType Directory -Path $configDir -Force | Out-Null
+        Write-Info "Created profile directory: $configDir"
     }
 
-    # Read as ordered hashtable to preserve key order on round-trip
-    $rawJson = Get-Content $ConfigPath -Raw -Encoding UTF8
-    if ($PSVersionTable.PSVersion.Major -ge 7) {
-        $cfg = $rawJson | ConvertFrom-Json -AsHashtable -Depth 32
+    if (Test-Path $ConfigPath) {
+        # Read as ordered hashtable to preserve key order on round-trip
+        $rawJson = Get-Content $ConfigPath -Raw -Encoding UTF8
+        if ($PSVersionTable.PSVersion.Major -ge 7) {
+            $cfg = $rawJson | ConvertFrom-Json -AsHashtable -Depth 32
+        } else {
+            # PS 5.1 has no -AsHashtable; convert manually preserving order
+            $obj = $rawJson | ConvertFrom-Json
+            foreach ($p in $obj.PSObject.Properties) { $cfg[$p.Name] = $p.Value }
+        }
+
+        # Backup before write
+        $backup = "$ConfigPath.bak.$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+        Copy-Item -LiteralPath $ConfigPath -Destination $backup -Force
+        Write-Info "Backup written: $backup"
     } else {
-        # PS 5.1 has no -AsHashtable; convert manually preserving order
-        $obj = $rawJson | ConvertFrom-Json
-        $cfg = [ordered]@{}
-        foreach ($p in $obj.PSObject.Properties) { $cfg[$p.Name] = $p.Value }
+        Write-Info "Creating new $ConfigPath (Claude has not launched on this profile yet)."
     }
-
-    # Backup before write
-    $backup = "$ConfigPath.bak.$(Get-Date -Format 'yyyyMMdd-HHmmss')"
-    Copy-Item -LiteralPath $ConfigPath -Destination $backup -Force
-    Write-Info "Backup written: $backup"
 
     if ($Enable) {
         $cfg['allowDevTools'] = $true
@@ -143,6 +160,40 @@ function Set-AllowDevTools {
     $tmp = "$ConfigPath.tmp"
     [System.IO.File]::WriteAllText($tmp, $newJson, (New-Object System.Text.UTF8Encoding $false))
     Move-Item -LiteralPath $tmp -Destination $ConfigPath -Force
+}
+
+# ============================================================================
+# Env var management (CLAUDE_DEV_TOOLS) + WM_SETTINGCHANGE broadcast so
+# Explorer (and thus newly-launched Claude) picks up the change immediately.
+# ============================================================================
+$EnvBroadcastSrc = @"
+using System;
+using System.Runtime.InteropServices;
+public static class EnvBroadcast {
+    [DllImport("user32.dll", SetLastError=true, CharSet=CharSet.Auto)]
+    static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);
+    public static void Notify() {
+        UIntPtr result;
+        SendMessageTimeout((IntPtr)0xffff, 0x001A, UIntPtr.Zero, "Environment", 0x0002, 5000, out result);
+    }
+}
+"@
+
+function Set-ClaudeDevToolsEnv {
+    param([string]$Value)
+
+    if (-not ('EnvBroadcast' -as [type])) {
+        Add-Type -TypeDefinition $EnvBroadcastSrc -Language CSharp
+    }
+
+    [Environment]::SetEnvironmentVariable('CLAUDE_DEV_TOOLS', $Value, 'User')
+    try { [EnvBroadcast]::Notify() } catch { }
+
+    if ($null -eq $Value -or $Value -eq '') {
+        Write-Info "Removed CLAUDE_DEV_TOOLS user env var."
+    } else {
+        Write-Info "Set CLAUDE_DEV_TOOLS = '$Value' (user scope, broadcast to Explorer)."
+    }
 }
 
 # ============================================================================
@@ -208,34 +259,28 @@ function Invoke-StatusMode {
 }
 
 function Invoke-EnableDevModeMode {
-    $info = Get-ClaudeDesktopInfo
-    $dt   = Get-DevToolsState
-
-    if (-not $dt.ConfigExists) {
-        Write-Err "config.json not found at $ConfigPath. Launch Claude once first, then re-run."
-        return
+    # Best-effort: warn if MSIX is missing but still proceed (user might
+    # install Claude later; the config will be honored when it launches).
+    try {
+        $info = Get-ClaudeDesktopInfo
+        Write-Ok "Claude Desktop v$($info.Version) detected."
+    } catch {
+        Write-Warn "Claude Desktop MSIX not detected ($_). Continuing with config write -- it will take effect when Claude is installed and launched."
     }
-    if ($dt.AllowDevTools -eq $true) {
+
+    $dt = Get-DevToolsState
+    if ($dt.ConfigExists -and $dt.AllowDevTools -eq $true) {
         Write-Ok "allowDevTools is already true -- nothing to do."
         return
     }
 
-    Write-Info "About to set 'allowDevTools' = true in:"
-    Write-Info "  $ConfigPath"
-    Write-Info "This is the same key Claude's own 'Enable Developer Mode' menu writes."
-    if (-not $NoConfirm) {
-        Write-Host "  Type Y to proceed, anything else to cancel." -ForegroundColor Yellow
-        $ans = Read-Host
-        if ($ans -notmatch '^[yY]') { Write-Info "Cancelled."; return }
-    }
-
     Set-AllowDevTools -Enable:$true
-    Write-Ok "allowDevTools = true written to config.json."
+    Write-Ok "allowDevTools = true written to $ConfigPath"
 
     if (Get-RunningClaudeMainProcesses) {
         Write-Warn "Claude is currently running. Close and reopen it for the change to take effect."
     } else {
-        Write-Info "Now launch Claude. Press Ctrl+Alt+I once it's open."
+        Write-Info "Launch Claude. DevTools opens automatically if CLAUDE_DEV_TOOLS env var is set."
     }
 }
 
@@ -245,13 +290,30 @@ function Invoke-DisableDevModeMode {
         Write-Info "allowDevTools is not currently set -- nothing to remove."
         return
     }
-    if (-not $NoConfirm) {
-        Write-Host "Remove 'allowDevTools' key from $ConfigPath ? (Y/n)" -ForegroundColor Yellow
-        $ans = Read-Host
-        if ($ans -notmatch '^[yY]') { Write-Info "Cancelled."; return }
-    }
     Set-AllowDevTools -Enable:$false
     Write-Ok "Key removed. Restart Claude for it to take effect."
+}
+
+function Invoke-SetupMode {
+    Write-Info "=== Claude RTL Companion -- Setup ==="
+    Write-Info "Step 1/3: enable allowDevTools in config.json"
+    Invoke-EnableDevModeMode
+
+    Write-Info ""
+    Write-Info "Step 2/3: set CLAUDE_DEV_TOOLS=detach user env var"
+    Set-ClaudeDevToolsEnv -Value 'detach'
+
+    Write-Info ""
+    Write-Info "Step 3/3: copy current RTL snippet to clipboard"
+    try { Copy-SnippetToClipboard } catch { Write-Warn "Could not copy snippet: $_" }
+
+    Write-Host ""
+    Write-Ok "Setup complete. Next:"
+    Write-Host "  1. Close Claude Desktop completely (also from the system tray)."
+    Write-Host "  2. Reopen Claude. DevTools should auto-open in a separate window."
+    Write-Host "  3. In DevTools click the Console tab, then Ctrl+V then Enter."
+    Write-Host ""
+    Write-Info "For a permanent one-click flow, see Option A (DevTools Snippets) in the README."
 }
 
 function Invoke-CopySnippetMode {
@@ -278,6 +340,7 @@ function Invoke-PrintSnippetMode {
 # ============================================================================
 switch ($Mode) {
     'Status'         { Invoke-StatusMode }
+    'Setup'          { Invoke-SetupMode }
     'EnableDevMode'  { Invoke-EnableDevModeMode }
     'DisableDevMode' { Invoke-DisableDevModeMode }
     'CopySnippet'    { Invoke-CopySnippetMode }

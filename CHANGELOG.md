@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Launcher updates (post-initial-release)
+- Added `-Mode Setup` that does the full one-shot install non-interactively:
+  `EnableDevMode` + sets `CLAUDE_DEV_TOOLS=detach` user env var +
+  broadcasts `WM_SETTINGCHANGE` to Explorer + copies the snippet to the
+  clipboard. Intended path for both manual users and automated installs
+  (e.g. Claude Code running through the script).
+- `EnableDevMode` no longer requires `config.json` to pre-exist. If the
+  user's roaming Claude profile directory is missing, it is created.
+  If `config.json` is missing, a minimal one is created with just
+  `allowDevTools: true`. Claude fills in its own keys on first launch.
+- Removed the `Read-Host` Y/N prompts from `EnableDevMode` and
+  `DisableDevMode`. Both actions are reversible (`DisableDevMode`),
+  auto-backed-up, and the user already consented by specifying the
+  mode -- there was no reason to second-guess. The `-NoConfirm` switch
+  is retained as a no-op for backwards compatibility.
+- This unblocks the install loop reported when running the script from
+  inside Claude Code's non-interactive shell, where `Read-Host` never
+  received input.
+- `EnableDevMode` also no longer hard-errors when Claude Desktop's MSIX
+  package is not yet installed. It writes the config anyway with a
+  warning so the value is in place when Claude is installed later.
+
+### v12 (snippet) -- chat input direction
+- Broadens CSS input selectors to cover Lexical, ProseMirror, Tiptap,
+  Quill, Slate, and `[aria-label*="Message"]` editors so the chat
+  composer is reliably caught across Claude Desktop builds.
+- JS sets `dir="auto"` on those input elements via the same tagging
+  loop used for `<p>`/`<td>`/etc, so the input flips direction once
+  the first strong character is typed (Hebrew -> RTL, English -> LTR).
+- Drops `unicode-bidi: plaintext` from input CSS for the same reason
+  v11 dropped it from `<p>`/`<li>`: when the editor is inside an
+  explicit RTL ancestor, `plaintext` would override the inherited
+  direction.
+
+### v11 (snippet) -- mixed-language items in RTL lists
+- v10 had `unicode-bidi: plaintext !important` on every `<p>`, `<li>`,
+  `<td>`, etc. When a `<p>` was inside a `<ul dir="rtl">`, the `<p>`
+  inherited element direction RTL but `plaintext` overrode the
+  paragraph base direction to "first-strong of own content". For
+  English-first mixed content the paragraph direction went LTR,
+  giving a broken-looking split between the right-side marker and
+  left-drifting content.
+- v11 keeps `dir="rtl"` on the list, no longer applies `plaintext`
+  to `<p>`/`<li>` etc, and tags `<p>`/`<td>`/etc with `dir="auto"`
+  only when they are NOT inside an `[dir="rtl"]` ancestor. Inside
+  RTL lists, elements inherit RTL direction and the bidi algorithm
+  handles mixed Hebrew+English chunks within each line naturally.
+
 ### Changed in v10 (snippet) -- real-time tagging
 - v9's tagAuto re-ran on a 3-second `setInterval`, leaving a 0--3 second
   gap between new content arriving and getting tagged. Visible for things

@@ -1,4 +1,4 @@
-# Claude RTL Companion
+﻿# Claude RTL Companion
 
 Safe, update-resilient RTL/Hebrew text rendering for **Claude Desktop** on
 Windows that uses the application's own officially-shipped Developer Mode
@@ -78,22 +78,49 @@ cd C:\dev\RTL
 
 ## One-time setup
 
+The simplest, fully non-interactive command does everything in one shot.
+Safe to run repeatedly (idempotent) and safe for automated installs
+including from within Claude Code itself:
+
 ```powershell
-# 1. Check current state (no changes made)
-.\claude-rtl.ps1
+.\claude-rtl.ps1 -Mode Setup
+```
 
-# 2. Write allowDevTools=true into your Claude config (a timestamped
-#    backup of config.json is made first). Asks for Y/N confirmation.
-.\claude-rtl.ps1 -Mode EnableDevMode
+This:
+1. Writes `allowDevTools: true` into `%APPDATA%\Claude\config.json`
+   (creates the file if Claude has never launched on this profile;
+   makes a timestamped backup if it exists).
+2. Sets `CLAUDE_DEV_TOOLS=detach` as a user environment variable and
+   broadcasts `WM_SETTINGCHANGE` so Explorer picks it up immediately
+   (no logout required).
+3. Copies the latest injection snippet to your clipboard.
 
-# 3. Set CLAUDE_DEV_TOOLS=detach as a user env var so DevTools auto-opens
-#    on every Claude launch.
+Then close Claude completely (including the system tray) and reopen.
+DevTools should auto-open in a separate Chromium window each time Claude
+starts.
+
+### If you'd rather do the steps individually
+
+```powershell
+.\claude-rtl.ps1                     # Status (read-only)
+.\claude-rtl.ps1 -Mode EnableDevMode # writes config.json
+.\claude-rtl.ps1 -Mode CopySnippet   # snippet -> clipboard
+# Env var (Setup mode does this for you):
 [Environment]::SetEnvironmentVariable("CLAUDE_DEV_TOOLS", "detach", "User")
 ```
 
-Then close Claude completely (including the system tray) and reopen.
-DevTools should now auto-open in a separate Chromium window each time
-Claude starts.
+### PowerShell execution policy
+
+If `.\claude-rtl.ps1` errors with *"running scripts is disabled on this
+system"*, you have two options:
+
+```powershell
+# Option 1 -- bypass once for the current process only (safest):
+powershell -ExecutionPolicy Bypass -File .\claude-rtl.ps1 -Mode Setup
+
+# Option 2 -- allow local scripts for your user (persistent):
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+```
 
 ## Per-session workflow
 
@@ -148,12 +175,14 @@ then `Ctrl+V` and `Enter` in the DevTools Console.
 | Mode | What it does |
 |---|---|
 | `Status` (default) | Read-only. Shows version, run state, current `allowDevTools` value. |
-| `EnableDevMode` | Backs up `config.json`, sets `allowDevTools = true`. |
+| `Setup` | One-shot: `EnableDevMode` + sets `CLAUDE_DEV_TOOLS=detach` env var + broadcasts the env change + copies snippet to clipboard. |
+| `EnableDevMode` | Creates or updates `config.json`, sets `allowDevTools = true`. Auto-creates the file/directory if Claude has never launched. Backs up first if it exists. |
 | `DisableDevMode` | Backs up `config.json`, removes the `allowDevTools` key. |
 | `CopySnippet` | Puts the injection snippet on your clipboard. |
 | `PrintSnippet` | Prints the snippet to stdout. |
 
-All modes accept `-NoConfirm` to skip Y/N prompts.
+All modes are non-interactive (no Y/N prompts). The `-NoConfirm` flag is
+accepted for backwards compatibility but is now a no-op.
 
 ## How it works (one paragraph)
 
@@ -209,12 +238,15 @@ claude-rtl-companion/
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| DevTools doesn't auto-open | `CLAUDE_DEV_TOOLS` env var didn't propagate to Explorer | Sign out + back in, or open Claude via `Claude-RTL.cmd` which inherits the env var from PowerShell |
+| Script hangs at "Type Y to proceed" | Older version with `Read-Host` prompt running in a non-interactive shell (e.g. inside Claude Code) | Pull the latest -- prompts have been removed. Or pass `-Mode Setup` which is always non-interactive |
+| `Config not found at … launch Claude at least once first` | Older version that required pre-existing `config.json` | Pull the latest -- `EnableDevMode` now creates the file if missing |
+| `running scripts is disabled on this system` | PowerShell execution policy | Run with `powershell -ExecutionPolicy Bypass -File .\claude-rtl.ps1 -Mode Setup` or change policy (see *PowerShell execution policy* above) |
+| DevTools doesn't auto-open | `CLAUDE_DEV_TOOLS` env var didn't propagate to Explorer | `-Mode Setup` broadcasts `WM_SETTINGCHANGE` to fix this. If still missing: sign out + back in, or open Claude via `Claude-RTL.cmd` which inherits the env var from PowerShell |
 | `Ctrl+Alt+I` does nothing in Claude | Hebrew keyboard layout intercepts `Ctrl+Alt` as `AltGr` | Switch to English layout (`Win+Space`) before pressing, or rely on the auto-open env var instead |
 | Hamburger menu hidden behind window-controls overlay | Windows RTL OS locale flips title-bar buttons | The snippet adds inline-start padding via the WCO API; falls back to 140px if WCO API is unavailable |
 | Snippet runs but no visual change | An older version is loaded -- clear with `claudeRtlRemove()` then re-paste current snippet |
-| Lists with mixed-language items split visually (marker right, content drifting left) | Older snippet (≤ v10) -- update to current `scripts/inject-snippet.js` |
-| Chat composer doesn't flip direction when typing Hebrew | Older snippet (≤ v11) without input coverage -- update to current snippet |
+| Lists with mixed-language items split visually (marker right, content drifting left) | Older snippet (≤ v10) -- pull latest and re-copy |
+| Chat composer doesn't flip direction when typing Hebrew | Older snippet (≤ v11) without input coverage -- pull latest and re-copy |
 | `Set-Clipboard` not found in PowerShell | Very old PowerShell -- use `-Mode PrintSnippet` and copy by hand |
 
 ## Contributing
