@@ -1,0 +1,19 @@
+# Windows artifacts
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# Local config backups produced by claude-rtl.ps1 EnableDevMode/DisableDevMode
+# (lives in %APPDATA%\Claude, not in the repo, but listed defensively)
+config.json.bak.*
+
+# Local environment overrides (none today, but reserved)
+.env
+.env.local

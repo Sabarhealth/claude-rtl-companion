@@ -1,0 +1,186 @@
+﻿# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Changed in v10 (snippet) -- real-time tagging
+- v9's tagAuto re-ran on a 3-second `setInterval`, leaving a 0--3 second
+  gap between new content arriving and getting tagged. Visible for things
+  like AskUserQuestion picker UIs and freshly-streamed assistant messages
+  -- the bullet would render on the wrong side until the next interval.
+- v10 adds a debounced `MutationObserver` on `document.body` that schedules
+  a 200ms timeout on the first mutation in a burst, then runs `tagAuto()`.
+  Subsequent mutations during the same 200ms window are coalesced into the
+  single pending run. The observer callback itself does no heavy work.
+- The observer does NOT watch attribute mutations, so our own `dir="rtl"`
+  writes do not feed back into the observer (avoiding v3's cascade).
+- Backup `setInterval` retained at 5 seconds for resilience against
+  observer disconnects.
+
+### Changed in v9 (snippet) -- working state for list markers
+- v8 set `dir="rtl"` on `<ul>`/`<ol>` containing Hebrew but ALSO set
+  `dir="auto"` on each `<li>`. CSS spec places list markers at the
+  inline-start of the `<li>` itself, so the `<li>`'s direction is what
+  matters -- and `dir="auto"` overrides any inherited direction. List
+  items that started with English (e.g. an HTML tag in code formatting)
+  detected as LTR, so markers stayed on the left even when the
+  surrounding list was RTL.
+- v9 keeps `dir="rtl"` on the list container but does NOT tag `<li>`.
+  With no `dir` on the items, they inherit the list's direction. RTL
+  list -> RTL `<li>` -> marker on the inline-start of the `<li>` =
+  right edge.
+- Tailwind prose draws markers as `::before` with
+  `position: absolute; left: 0`, which is a physical offset that does
+  not flip in RTL. v9 uses the `:dir(rtl)` pseudo-class to override
+  those `::before` rules to `right: 0` whenever the computed direction
+  is RTL (works for both attribute-set and inherited direction). The
+  list and item `padding-left` are mirrored to `padding-right` the
+  same way.
+- Per-paragraph content within `<li>` still uses
+  `unicode-bidi: plaintext` so a single line containing English code
+  followed by Hebrew text still flows naturally as one paragraph
+  rather than fragmenting.
+
+### Changed in v8 (snippet)
+- Attempted to fix list markers by tagging `<ul>`/`<ol>` with `dir="rtl"`
+  via a Hebrew/Arabic content heuristic. Worked partially but markers
+  still appeared on the wrong side because the per-`<li>` `dir="auto"`
+  from v6/v7 overrode the inherited direction (see v9 note above).
+
+### Changed in v7 (snippet)
+- Identified the actual cause of the misplaced list markers: Claude renders
+  message content with Tailwind Typography (`@tailwindcss/typography`,
+  the `prose` plugin), which draws ordered- and unordered-list markers
+  with `::before` pseudo-elements positioned at `position: absolute;
+  left: 0`. `left` is a *physical* offset, not a logical one. Setting
+  `dir="auto"` on the `<li>` correctly flips text direction, but the
+  absolutely-positioned pseudo-marker stays glued to the left edge.
+- v7 hides the prose `::before` markers (`display: none !important;
+  content: none !important`) and uses the browser's native list markers
+  with `list-style-position: inside`, so the marker joins the bidi text
+  flow and the browser positions it according to the element's direction.
+  Native markers natively respect `dir="auto"`.
+- v7 also resets the prose-applied `padding-left` on `<li>` (which existed
+  to make room for the absolute `::before` markers) so RTL text is no
+  longer pushed away from the right edge.
+
+### Changed in v6 (snippet)
+- v5 used `* { unicode-bidi: plaintext !important }`. That applied the
+  property to inline elements (span, strong, em, code, a) inside paragraphs
+  too. Inline elements with `plaintext` become their own bidi paragraphs,
+  which fragments mixed-content lines: a bullet item containing `<strong>`
+  English keywords plus surrounding Hebrew text rendered as a stack of
+  orphaned fragments, with bullets visually disconnected from their text.
+- v6 scopes `unicode-bidi: plaintext` to block-level text containers only:
+  `p, li, dt, dd, blockquote, td, th, summary, figcaption, caption, h1-h6`.
+  Inline elements keep their default bidi behavior so mixed-language text
+  inside a paragraph flows as a single line.
+- Otherwise carries over v5: `dir="auto"` on those same block elements as
+  the load-bearing mechanism, `setInterval` re-tag every 3s, no subtree
+  observer, table column-order LTR.
+
+### Changed in v5 (snippet)
+- v4's pure-CSS approach to list markers (`* { unicode-bidi: plaintext }` +
+  `list-style-position: inside`) lost the cascade against Claude's Tailwind
+  prose CSS, which has higher specificity with `!important` on `<li>`. Lines
+  inside lists rendered LTR even when content was Hebrew, leaving the
+  marker on the wrong side.
+- v4 also did nothing for tables; Claude inherits `direction: rtl` from a
+  locale-aware Tailwind path, which flips column order from source.
+- v5 sets HTML `dir="auto"` on `<li>`, `<p>`, `<td>`, `<th>` elements. The
+  `dir` attribute is honored by the bidi algorithm below CSS-specificity,
+  so it always wins. `auto` makes the browser auto-detect direction per
+  element from the first strong character, so English and Hebrew items in
+  the same list each get the right direction.
+- v5 adds `table, thead, tbody, tfoot, tr, colgroup { direction: ltr
+  !important }` so column order is preserved; per-cell direction is
+  handled by `dir="auto"` on each `<td>`/`<th>`.
+- v5 replaces v4's `MutationObserver` over `document.head` with a
+  `setInterval` (3s) that re-runs the small `querySelectorAll` to tag
+  newly-rendered list items. No subtree observer at all; the only
+  observer left watches `document.head.childList` for re-adding the
+  `<style>` if Claude removes it.
+- `claudeRtlRemove()` cleans up the `dir="auto"` attributes we added (only
+  on the four element tags we target, by tagName whitelist).
+
+### Changed in v4 (snippet)
+- v3 froze Claude. Two root causes:
+  1. The MutationObserver watched `document.documentElement` with
+     `subtree:true` and ran a TreeWalker plus a title-bar querySelector on
+     every batch. Claude's React SPA produces thousands of mutations per
+     second, so the observer callback became the dominant load.
+  2. Setting `dir="rtl"` on text-bearing descendants of `<table>` cells
+     interacted with React's reconciliation and ended up flipping table
+     column order on the next render.
+- v4 reverts to pure CSS. No DOM walker, no `dir` attributes added. List
+  markers move to the correct side via `list-style-position: inside`,
+  which puts the marker in the line box so the bidi algorithm positions
+  it from the line's first strong character. Trade-off: English lists
+  also get inside markers (slightly different visual layout, no
+  functional issue).
+- v4's MutationObserver watches only `document.head` with `childList:true`,
+  and only re-adds the `<style>` if Claude removes it. `document.head`
+  doesn't churn, so this observer is essentially idle.
+- Title-bar pad is now applied once + on `geometrychange`, not on every
+  mutation. A bounded retry covers the case where `.draggable` isn't
+  present on the first frame.
+
+### Changed in v3 (snippet)
+- Snippet now walks the DOM, detects Hebrew/Arabic text, and tags the
+  immediate text-bearing host with `dir="rtl"`. It also propagates
+  `dir="rtl"` to the closest `<ul>`/`<ol>` ancestor so list markers
+  (1., 2., 3., bullets) move to the correct side. v2's blanket `*`
+  selector did not solve this; v3 uses targeted CSS plus DOM tagging.
+- Snippet adds title-bar overlap fix using the
+  `navigator.windowControlsOverlay` API: when the OS draws window
+  controls on the inline-start side (Hebrew/Arabic locale on Windows
+  11), it queries `getTitlebarAreaRect()` and applies
+  `padding-inline-start` to the `.draggable:not(.draggable-none)` drag
+  region so the menu button is no longer covered. Falls back to 140px
+  padding when the WCO API is unavailable but the locale is RTL.
+- CSS now mirrors the targeted approach informed by
+  shraga100/claude-desktop-rtl-patch's runtime fix, reimplemented as a
+  console snippet so we never modify `app.asar`. Code blocks get
+  `direction:ltr; unicode-bidi:isolate` explicitly.
+- Snippet exposes `claudeRtlRemove()` that also cleans up the
+  `dir` attributes we added and the title-bar padding we set.
+
+### Added
+- Initial launcher `claude-rtl.ps1` with five modes:
+  `Status`, `EnableDevMode`, `DisableDevMode`, `CopySnippet`, `PrintSnippet`.
+- `styles/rtl.css` -- conservative bidirectional CSS using
+  `unicode-bidi: plaintext` on text-bearing elements only. Code blocks
+  are kept LTR explicitly.
+- `scripts/inject-snippet.js` -- the snippet that goes into Claude
+  Desktop's DevTools Console. Idempotent, includes `claudeRtlRemove()`
+  for in-session undo, installs a `MutationObserver` to survive
+  SPA route swaps.
+- `docs/SECURITY.md` -- threat-model write-up explaining why the
+  approach does not trip antivirus / EDR the way `app.asar` patching
+  does.
+- Atomic `config.json` editing with timestamped `.bak` backup before
+  every write. Edits exactly one key (`allowDevTools`).
+- Status mode that prints whether Claude is installed, whether it is
+  running, and the current value of `allowDevTools`, with a numbered
+  next-steps list.
+- `Set-Clipboard` integration so `CopySnippet` puts the snippet on the
+  clipboard and prints the five paste keystrokes.
+
+### Changed
+- Approach pivoted away from `--remote-debugging-port` + Chrome DevTools
+  Protocol injection after verifying that Electron 30+ (Claude is on
+  Electron 41.5.0) strips the flag at the CLI level before application
+  JavaScript runs. The new approach uses the application's own
+  officially-shipped Developer Mode feature, which writes the same
+  config-file key the in-app menu writes.
+
+### Removed
+- The original CDP injector (`Send-CdpCommand`, `Receive-CdpResponse`,
+  `Page.addScriptToEvaluateOnNewDocument`, `Runtime.evaluate`,
+  `Watch` mode) -- unused on the current Electron build.
+- The Win32 `PostMessage(WM_CLOSE)` graceful-close P/Invoke -- no
+  longer needed because the script no longer launches Claude itself.
