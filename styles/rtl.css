@@ -24,10 +24,9 @@ input[type="url"], input:not([type]), [contenteditable="true"],
   text-align: start !important;
 }
 
-/* Tables: keep column order LTR. Cell content auto-directs via dir="auto" */
-table, thead, tbody, tfoot, tr, colgroup {
-  direction: ltr !important;
-}
+/* Tables: column direction is controlled by the dir="rtl" attribute the
+   JS sets on each <table>. The thead/tbody/tfoot/tr/colgroup children
+   inherit the table direction, so no CSS override is needed here. */
 
 /* List markers for RTL contexts. Tailwind prose draws markers as ::before
    with position:absolute and left:0 (a physical offset). Flip them to the

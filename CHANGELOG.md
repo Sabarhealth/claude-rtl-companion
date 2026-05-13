@@ -29,6 +29,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   package is not yet installed. It writes the config anyway with a
   warning so the value is in place when Claude is installed later.
 
+### v13 (snippet) -- mixed-content RTL + flipped tables
+- Mixed-language paragraphs now force `dir="rtl"` even when the line
+  starts with English. Earlier versions tagged `<p>`, `<td>`, etc with
+  `dir="auto"`, which used first-strong-char to pick a direction:
+  a line like `<strong>Note</strong> שים לב` auto-detected as LTR
+  because the first strong char was "N". v13 sets `dir="rtl"` whenever
+  any Hebrew/Arabic character appears anywhere in the element's
+  textContent. Pure-English elements still get `dir="auto"` which
+  resolves to LTR, so English-only paragraphs are unchanged.
+- All tables outside code blocks now get `dir="rtl"`, which flips the
+  column order to right-to-left. The previous CSS rule
+  `table { direction: ltr !important }` is removed; the HTML dir
+  attribute is the source of truth.
+- Per-cell direction is still independent. `<td>`/`<th>` get `dir="rtl"`
+  if their own text has Hebrew, `dir="auto"` otherwise. A pure-English
+  cell in an RTL-ordered table stays left-aligned within its cell.
+- The `[dir="rtl"]` ancestor skip in step 3 was narrowed to
+  `ul[dir="rtl"], ol[dir="rtl"]` only. Cells inside an RTL table are
+  no longer skipped, so they get their own per-content direction.
+
 ### v12 (snippet) -- chat input direction
 - Broadens CSS input selectors to cover Lexical, ProseMirror, Tiptap,
   Quill, Slate, and `[aria-label*="Message"]` editors so the chat

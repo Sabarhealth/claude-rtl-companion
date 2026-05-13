@@ -1,7 +1,26 @@
 ﻿// =============================================================================
-// Claude RTL Companion -- DevTools console snippet (v12)
+// Claude RTL Companion -- DevTools console snippet (v13)
 // =============================================================================
-// v12 extends v11 to cover the chat input area. Claude Desktop's composer is
+// v13 changes two tagging behaviors per user request:
+//
+// 1. Mixed-language paragraphs now force RTL even when the line starts with
+//    English. Previously a paragraph like "<strong>Note</strong> שים לב"
+//    auto-detected to LTR because the first strong char was English. v13
+//    sets dir="rtl" whenever any Hebrew/Arabic character appears anywhere
+//    in the element's text content. Pure-English content stays dir="auto"
+//    (which resolves to LTR), so English-only lines are unchanged.
+//
+// 2. All tables (outside code blocks) get dir="rtl" so the column order
+//    flips to RTL. Per-cell text alignment is independent: <td>/<th> still
+//    get dir="rtl"/auto based on their own content, so a pure-English cell
+//    stays left-aligned within the RTL-ordered table.
+//
+// The previous CSS rule that forced `table { direction: ltr !important }`
+// is removed; the new HTML dir attribute on each table is now the source
+// of truth for column direction.
+// =============================================================================
+//
+// v12 extended v11 to cover the chat input area. Claude Desktop's composer is
 // a rich-text editor (likely Lexical or ProseMirror in practice) and the
 // generic textarea/contenteditable selectors didn't reliably catch it across
 // builds. v12:
@@ -73,10 +92,9 @@ input[type="url"], input:not([type]),
   text-align: start !important;
 }
 
-/* Tables: keep column order LTR. Cell content auto-directs via dir="auto" */
-table, thead, tbody, tfoot, tr, colgroup {
-  direction: ltr !important;
-}
+/* Tables: column direction comes from the dir attribute we set per-table in
+   JS (chat tables -> dir="rtl"). The thead/tbody/tfoot/tr/colgroup children
+   inherit table direction; no CSS override needed. */
 
 /* List markers for RTL contexts.
    Tailwind prose draws markers as ::before with position:absolute and left:0
@@ -158,7 +176,7 @@ pre *, code *, .code-block__code *, [class*="code-block"] *, [class*="CodeBlock"
   function tagAuto() {
     let n = 0;
     try {
-      // 1. Lists FIRST so subsequent passes can detect RTL ancestors.
+      // 1. Lists with Hebrew/Arabic content -> dir="rtl" (markers go right).
       const lists = document.querySelectorAll('ul:not([dir]), ol:not([dir])');
       for (const list of lists) {
         if (list.closest('pre, code, [class*="code-block"], [class*="CodeBlock"]')) continue;
@@ -167,20 +185,37 @@ pre *, code *, .code-block__code *, [class*="code-block"] *, [class*="CodeBlock"
           n++;
         }
       }
-      // 2. Block text containers: dir="auto" only when NOT inside an RTL
-      //    ancestor. Inside [dir="rtl"], elements inherit RTL and the bidi
-      //    algorithm handles mixed Hebrew+English chunks within each line.
+      // 2. Tables: ALL get dir="rtl" so column order flows right-to-left.
+      //    Per-cell direction is set independently below so pure-English
+      //    cells still align left.
+      const tables = document.querySelectorAll('table:not([dir])');
+      for (const table of tables) {
+        if (table.closest('pre, code, [class*="code-block"], [class*="CodeBlock"]')) continue;
+        table.setAttribute('dir', 'rtl');
+        n++;
+      }
+      // 3. Block text containers:
+      //    - Skip elements inside RTL <ul>/<ol> (they should inherit list direction)
+      //    - For everything else: rtl if any Hebrew/Arabic anywhere in the
+      //      text (mixed lines included), auto otherwise (resolves to LTR
+      //      for pure English).
+      //    NOTE: we do NOT skip descendants of RTL tables, because we want
+      //    per-cell direction so English cells in an RTL-ordered table
+      //    stay left-aligned within the cell.
       const els = document.querySelectorAll(AUTO_SELECTOR);
       for (const el of els) {
         if (el.closest('pre, code, [class*="code-block"], [class*="CodeBlock"]')) continue;
-        if (el.closest('[dir="rtl"]')) continue;
-        el.setAttribute('dir', 'auto');
+        if (el.closest('ul[dir="rtl"], ol[dir="rtl"]')) continue;
+        const text = el.textContent || '';
+        if (RTL_RX.test(text)) {
+          el.setAttribute('dir', 'rtl');
+        } else {
+          el.setAttribute('dir', 'auto');
+        }
         n++;
       }
-      // 3. Editable inputs: dir="auto" so direction flips to whatever the
-      //    user types (Hebrew -> RTL, English -> LTR). For empty inputs
-      //    auto resolves to LTR by default; the first Hebrew character
-      //    typed flips the whole input to RTL.
+      // 4. Editable inputs: dir="auto" so direction flips per first typed
+      //    character. Empty inputs resolve to LTR by default.
       const inputs = document.querySelectorAll(INPUT_SELECTOR);
       for (const inp of inputs) {
         if (inp.closest('pre, code, [class*="code-block"], [class*="CodeBlock"]')) continue;
@@ -333,19 +368,22 @@ pre *, code *, .code-block__code *, [class*="code-block"] *, [class*="CodeBlock"
     }
     const el = document.getElementById(STYLE_ID);
     if (el) el.remove();
-    document.querySelectorAll('[dir="auto"]').forEach(e => {
-      // Remove dir="auto" we likely added: AUTO_TAGS or any input-like element.
+    // Remove dir attributes we added. We tag specific tag groups (paragraph-
+    // like containers, inputs, and certain rich-text editors). Removing
+    // dir="auto" / dir="rtl" only from those tag/marker classes leaves any
+    // user-authored dir on other elements intact.
+    const isInputLike = (e) =>
+      e.tagName === 'TEXTAREA' || e.tagName === 'INPUT' ||
+      e.isContentEditable ||
+      e.getAttribute('role') === 'textbox' ||
+      e.matches('.ProseMirror, .tiptap, .ql-editor, [data-lexical-editor], [data-slate-editor]');
+
+    document.querySelectorAll('[dir="auto"], [dir="rtl"]').forEach(e => {
       const tag = e.tagName;
-      if (AUTO_TAGS.includes(tag) ||
-          tag === 'TEXTAREA' || tag === 'INPUT' ||
-          e.isContentEditable ||
-          e.getAttribute('role') === 'textbox' ||
-          e.matches('.ProseMirror, .tiptap, .ql-editor, [data-lexical-editor], [data-slate-editor]')) {
+      if (AUTO_TAGS.includes(tag) || isInputLike(e) ||
+          tag === 'UL' || tag === 'OL' || tag === 'TABLE') {
         e.removeAttribute('dir');
       }
-    });
-    document.querySelectorAll('ul[dir="rtl"], ol[dir="rtl"]').forEach(e => {
-      e.removeAttribute('dir');
     });
     document.querySelectorAll('[data-claude-rtl-padded]').forEach(e => {
       e.style.paddingInlineStart = '';
@@ -355,5 +393,5 @@ pre *, code *, .code-block__code *, [class*="code-block"] *, [class*="CodeBlock"
     return 'removed';
   };
 
-  return 'Claude RTL v12 applied (' + initialTagged + ' elements tagged, includes input). Run claudeRtlRemove() to undo.';
+  return 'Claude RTL v13 applied (' + initialTagged + ' elements tagged; mixed-content RTL, tables flipped). Run claudeRtlRemove() to undo.';
 })();
