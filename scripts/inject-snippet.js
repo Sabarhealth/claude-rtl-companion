@@ -1,7 +1,26 @@
 ﻿// =============================================================================
-// Claude RTL Companion -- DevTools console snippet (v13)
+// Claude RTL Companion -- DevTools console snippet (v14)
 // =============================================================================
-// v13 changes two tagging behaviors per user request:
+// v14 extends coverage to Claude Desktop's custom UI components (the
+// "epitaxy" design system), in particular the AskUserQuestion picker
+// (.epitaxy-approval-card) and the branch row (.epitaxy-branch-row).
+// These cards are built from <button>/<div> with custom class names, not
+// from semantic <p>/<li>/<td>, so v13's tag set missed them.
+//
+// v14:
+//   - Adds <button> to AUTO_TAGS so any button containing Hebrew gets
+//     dir="rtl" (flips its flex layout: text/icon order follows reading
+//     direction, RTL convention). Pure-English buttons get dir="auto"
+//     which resolves to LTR, so they are unchanged.
+//   - Tags .epitaxy-approval-card and .epitaxy-branch-row with dir="rtl"
+//     if their text content has Hebrew. Descendants inherit the card's
+//     RTL direction; nested flex containers reorder naturally.
+//   - Adds <button> to the CSS text-align:start rule so button label
+//     text follows the resolved direction (right for Hebrew, left for
+//     English).
+// =============================================================================
+//
+// v13 changed two tagging behaviors per user request:
 //
 // 1. Mixed-language paragraphs now force RTL even when the line starts with
 //    English. Previously a paragraph like "<strong>Note</strong> שים לב"
@@ -68,7 +87,7 @@
   const css = `
 /* All block text containers align by their resolved direction */
 p, li, dt, dd, blockquote, td, th, summary, figcaption, caption,
-h1, h2, h3, h4, h5, h6 {
+h1, h2, h3, h4, h5, h6, button {
   text-align: start !important;
 }
 
@@ -148,9 +167,19 @@ pre *, code *, .code-block__code *, [class*="code-block"] *, [class*="CodeBlock"
   // --------------------------------------------------------------------------
   const AUTO_TAGS = ['P', 'TD', 'TH', 'DT', 'DD', 'BLOCKQUOTE',
                      'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
-                     'SUMMARY', 'FIGCAPTION', 'CAPTION'];
+                     'SUMMARY', 'FIGCAPTION', 'CAPTION', 'BUTTON'];
   const AUTO_SELECTOR = AUTO_TAGS.map(t => t.toLowerCase() + ':not([dir])').join(',');
   const RTL_RX = /[֐-׿؀-ۿ܀-ݏހ-޿]/;
+
+  // Claude Desktop's custom UI containers (the "epitaxy" design system).
+  // These cards/rows use <button>/<div>/<span> with custom classes rather
+  // than semantic tags, so AUTO_SELECTOR alone misses them. We tag the
+  // outer card with dir="rtl" when it contains Hebrew; flex/grid layouts
+  // inside the card reorder naturally based on inherited direction.
+  const CLAUDE_CARD_SELECTOR = [
+    '.epitaxy-approval-card:not([dir])',
+    '.epitaxy-branch-row:not([dir])'
+  ].join(',');
 
   // Editable surface selector: covers textarea, generic contenteditable,
   // and rich-text editor frameworks (Lexical, ProseMirror, Tiptap, Quill,
@@ -193,6 +222,17 @@ pre *, code *, .code-block__code *, [class*="code-block"] *, [class*="CodeBlock"
         if (table.closest('pre, code, [class*="code-block"], [class*="CodeBlock"]')) continue;
         table.setAttribute('dir', 'rtl');
         n++;
+      }
+      // 2b. Claude Desktop UI cards (AskUserQuestion picker, branch row).
+      //     These are <div>-based custom components; tag the outer card so
+      //     descendants inherit RTL and nested flex containers flip order.
+      const cards = document.querySelectorAll(CLAUDE_CARD_SELECTOR);
+      for (const card of cards) {
+        if (card.closest('pre, code, [class*="code-block"], [class*="CodeBlock"]')) continue;
+        if (RTL_RX.test(card.textContent || '')) {
+          card.setAttribute('dir', 'rtl');
+          n++;
+        }
       }
       // 3. Block text containers:
       //    - Skip elements inside RTL <ul>/<ol> (they should inherit list direction)
@@ -381,7 +421,8 @@ pre *, code *, .code-block__code *, [class*="code-block"] *, [class*="CodeBlock"
     document.querySelectorAll('[dir="auto"], [dir="rtl"]').forEach(e => {
       const tag = e.tagName;
       if (AUTO_TAGS.includes(tag) || isInputLike(e) ||
-          tag === 'UL' || tag === 'OL' || tag === 'TABLE') {
+          tag === 'UL' || tag === 'OL' || tag === 'TABLE' ||
+          e.matches('.epitaxy-approval-card, .epitaxy-branch-row')) {
         e.removeAttribute('dir');
       }
     });
@@ -393,5 +434,5 @@ pre *, code *, .code-block__code *, [class*="code-block"] *, [class*="CodeBlock"
     return 'removed';
   };
 
-  return 'Claude RTL v13 applied (' + initialTagged + ' elements tagged; mixed-content RTL, tables flipped). Run claudeRtlRemove() to undo.';
+  return 'Claude RTL v14 applied (' + initialTagged + ' elements tagged; includes <button> + Claude epitaxy cards). Run claudeRtlRemove() to undo.';
 })();

@@ -29,6 +29,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   package is not yet installed. It writes the config anyway with a
   warning so the value is in place when Claude is installed later.
 
+### v14 (snippet) -- Claude epitaxy UI (AskUserQuestion picker, branch row)
+- Extends coverage to Claude Desktop's custom UI components built on the
+  internal "epitaxy" design system: the AskUserQuestion picker
+  (`.epitaxy-approval-card`) and the branch info row
+  (`.epitaxy-branch-row`). Those cards are constructed from
+  `<button>`/`<div>` with custom class names, not from semantic
+  `<p>`/`<li>`/`<td>`, so the v13 tag set never matched them. The Q&A
+  picker stayed LTR even when the question and option labels contained
+  Hebrew.
+- v14 adds `BUTTON` to the AUTO_TAGS tag set so any `<button>` whose text
+  contains Hebrew/Arabic gets `dir="rtl"`. The button's flex layout
+  reorders naturally (text/icon swap sides). Pure-English buttons get
+  `dir="auto"` and keep their LTR layout.
+- Adds a CLAUDE_CARD_SELECTOR pass that tags
+  `.epitaxy-approval-card` / `.epitaxy-branch-row` with `dir="rtl"`
+  when the card's textContent has Hebrew. Descendant flex containers
+  inherit RTL direction and flip their child order accordingly.
+- Adds `button` to the CSS `text-align: start` rule so button label
+  text follows the button's resolved direction (right for Hebrew,
+  left for English) instead of Tailwind's hard-coded `text-left`.
+
 ### v13 (snippet) -- mixed-content RTL + flipped tables
 - Mixed-language paragraphs now force `dir="rtl"` even when the line
   starts with English. Earlier versions tagged `<p>`, `<td>`, etc with

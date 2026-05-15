@@ -9,10 +9,11 @@
        ::before pseudo-marker (which uses physical left:0)
    ============================================================================= */
 
-/* Block-level text containers auto-direct via plaintext bidi */
+/* Block-level text containers align by their resolved direction. <button>
+   is included so Q&A picker option buttons (which are flex rows of
+   text + keyboard-hint icon) get Hebrew-aware alignment when tagged. */
 p, li, dt, dd, blockquote, td, th, summary, figcaption, caption,
-h1, h2, h3, h4, h5, h6 {
-  unicode-bidi: plaintext !important;
+h1, h2, h3, h4, h5, h6, button {
   text-align: start !important;
 }
 
