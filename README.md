@@ -164,10 +164,13 @@ One-time setup: save the snippet as a DevTools snippet named
 4. Run `.\claude-rtl.ps1 -Mode InstallShortcut`; pin **"Claude (LTR)"**
    to your taskbar.
 
-Per session: launch Claude with the pinned **Claude (LTR)** icon, click
-into your session, press **`Ctrl+Alt+R`**. The Inject automation opens
-DevTools for that session, runs the snippet, closes DevTools, and
-restores your keyboard layout -- about three seconds end to end.
+Day-to-day: just launch Claude with the pinned **Claude (LTR)** icon.
+The launcher clicks into the session view for you, injects the snippet
+through DevTools, and closes DevTools -- fully hands-free. Claude
+reuses ONE session view for all chats, so a single injection per launch
+covers every session you open. If the automation ever misses (e.g. the
+app opened on the Home screen), click into your chat and press
+**`Ctrl+Alt+R`** -- same injection, on demand, ~3 seconds.
 
 Keyboard-layout note: synthetic keystrokes translate through the active
 layout (a Hebrew layout garbles chords and names), so the automation

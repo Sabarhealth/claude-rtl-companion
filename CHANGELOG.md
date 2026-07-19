@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Launcher: fully automatic launch flow (shared session view)
+- User-verified: Claude REUSES one session WebContentsView across all
+  sessions (switching chats keeps the injected RTL fixes). One
+  injection per app launch therefore covers every session.
+- `LaunchLtr`'s auto-inject now targets the session view instead of the
+  shell: after the main window appears it CLICKS into the transcript
+  area (62%/45% of the window) to move focus into the session view,
+  opens DevTools, and verifies by title that it reached a
+  `.../epitaxy/local_*` document -- if it caught the shell instead, it
+  closes that DevTools and retries (up to 3 attempts). Verified live:
+  click -> Ctrl+Alt+I attaches to the session document.
+- End state: launching via the pinned "Claude (LTR)" icon is fully
+  zero-touch -- LTR window, session view injected, DevTools closed.
+  Ctrl+Alt+R remains as a manual fallback (e.g. if the launch-time
+  click landed on the Home screen with no session open).
+
 ### Launcher: per-session `Inject` mode + Ctrl+Alt+R hotkey
 - In-page overlay diagnostics revealed the real app architecture:
   Claude Desktop is a shell document (`claude.ai/epitaxy`) plus one

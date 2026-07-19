@@ -464,15 +464,36 @@ function Invoke-AutoInject {
     # WM_INPUTLANGCHANGEREQUEST -- per-window, the desktop keeps its layout.
     # Every bail-out leaves the snippet on the clipboard for manual paste.
     Add-Type -Namespace ClaudeRtl -Name Win32 -MemberDefinition @'
+[StructLayout(LayoutKind.Sequential)]
+public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
 [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
 [DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder text, int count);
 [DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern IntPtr LoadKeyboardLayout(string pwszKLID, uint Flags);
 [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
 [DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern IntPtr FindWindow(string cls, string title);
 [DllImport("user32.dll")] public static extern void SwitchToThisWindow(IntPtr hWnd, bool altTab);
+[DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+[DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+[DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, System.UIntPtr extra);
 '@ -ErrorAction SilentlyContinue
 
     $shell = New-Object -ComObject WScript.Shell
+
+    # Left-click at a fractional position inside the FOREGROUND window.
+    # Used at launch to move focus from the shell document into the session
+    # view (the transcript area) so Ctrl+Alt+I targets the session.
+    function Click-InForeground([double]$FracX, [double]$FracY) {
+        $fg = [ClaudeRtl.Win32]::GetForegroundWindow()
+        $r = New-Object ClaudeRtl.Win32+RECT
+        [void][ClaudeRtl.Win32]::GetWindowRect($fg, [ref]$r)
+        $x = $r.Left + [int](($r.Right - $r.Left) * $FracX)
+        $y = $r.Top + [int](($r.Bottom - $r.Top) * $FracY)
+        [void][ClaudeRtl.Win32]::SetCursorPos($x, $y)
+        Start-Sleep -Milliseconds 150
+        [ClaudeRtl.Win32]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)   # LEFTDOWN
+        [ClaudeRtl.Win32]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)   # LEFTUP
+        Start-Sleep -Milliseconds 300
+    }
 
     # Focus a window by title, verify it really is foreground, then switch
     # its input language to en-US. Returns $true when safe to type.
@@ -521,29 +542,51 @@ function Invoke-AutoInject {
         }
     }
 
-    # Give CLAUDE_DEV_TOOLS=detach a chance to auto-open DevTools (skip the
-    # grace in Immediate mode -- the user just asked for injection NOW)...
-    $title = if ($Immediate) { Find-DevToolsWindow -TimeoutSec 1 } else { Find-DevToolsWindow -TimeoutSec 10 }
-    if (-not $title) {
-        # ...and open it ourselves when it doesn't (observed: the env var
-        # does not reliably auto-open on current builds). Ctrl+Alt+I opens
-        # DevTools for the FOCUSED webview: at launch that is the shell
-        # document; inside a session it is the session's WebContentsView --
-        # which is exactly what Inject mode wants.
-        Write-Info "Opening DevTools (Ctrl+Alt+I) for the focused view."
-        if (-not $Immediate) { Start-Sleep -Seconds 2 }   # let the renderer load
-        if (-not (Set-TypingTarget 'Claude' 'Claude*')) {
-            Write-Warn "Could not safely focus the Claude window -- paste manually (snippet is on the clipboard)."
-            return
+    # Ctrl+Alt+I opens DevTools for the FOCUSED webview. Session views are
+    # native WebContentsViews whose document URL is claude.ai/epitaxy/local_*
+    # -- and one view is REUSED across all sessions (verified live), so a
+    # single injection into it covers every chat until the app exits.
+    # At launch the shell has focus, so we first CLICK into the transcript
+    # area to focus the session view, then verify by the DevTools title
+    # ('local_' = session document, otherwise we hit the shell and retry).
+    # In Immediate mode (Ctrl+Alt+R) the user's own focus picks the target.
+    $title = $null
+    $leftover = Find-DevToolsWindow -TimeoutSec 1
+    if ($leftover) {
+        $title = $leftover   # a DevTools window is already open -- use it
+    } else {
+        $attempt = 0
+        while (-not $title) {
+            $attempt++
+            if (-not $Immediate) { Start-Sleep -Seconds 2 }   # let the app settle
+            if (-not (Set-TypingTarget 'Claude' 'Claude*')) {
+                Write-Warn "Could not safely focus the Claude window -- paste manually (snippet is on the clipboard)."
+                return
+            }
+            if (-not $Immediate) {
+                Click-InForeground 0.62 0.45   # focus the session view
+            }
+            $shell.SendKeys('^%i')   # Ctrl+Alt+I
+            $title = Find-DevToolsWindow -TimeoutSec 15
+            if (-not $title) {
+                Write-Warn "No DevTools window appeared -- skipping auto-inject. Is allowDevTools enabled? (-Mode Setup)."
+                return
+            }
+            if (-not $Immediate -and $title -notlike '*local_*' -and $attempt -lt 3) {
+                # Hit the shell document -- close its DevTools and retry the
+                # click (the session view may not have been ready yet).
+                Write-Info "DevTools attached to the shell ('$title'); closing and retrying ($attempt)."
+                if (Set-TypingTarget $title $DevToolsTitlePattern) { $shell.SendKeys('%{F4}') }
+                Start-Sleep -Milliseconds 900
+                $title = $null
+            }
         }
-        $shell.SendKeys('^%i')   # Ctrl+Alt+I
-        $title = Find-DevToolsWindow -TimeoutSec 15
-    }
-    if (-not $title) {
-        Write-Warn "No DevTools window appeared -- skipping auto-inject. Is allowDevTools enabled? (-Mode Setup)."
-        return
     }
     Write-Info "DevTools window: '$title'"
+    if ($title -notlike '*local_*') {
+        Write-Warn "This DevTools is NOT a session view (no 'local_' in the URL) -- injecting anyway, but the chat may be unaffected."
+        Write-Warn "Click inside the chat area and press Ctrl+Alt+R to inject the session itself."
+    }
 
     # -- Step 2: run the saved snippet via the Command Menu -----------------
     Start-Sleep -Seconds 2   # let DevTools finish loading its panels
