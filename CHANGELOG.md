@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Launcher: self-update on every launch/inject
+- `LaunchLtr` and `Inject` now run a silent `git pull --ff-only` on the
+  repo before copying the snippet, with `GIT_TERMINAL_PROMPT=0` so a
+  credential prompt can never hang the hidden window. Offline, missing
+  git, local changes, or a non-repo folder all skip silently.
+- Combined with the DevTools editor-sync, installs are now fully
+  self-maintaining: set up once per machine (README "One-time setup"
+  checklist), then every launch runs the latest launcher + snippet.
+- README's One-time setup section rewritten as the complete per-machine
+  checklist (Setup -> save snippet named `Claude-RTL` -> InstallShortcut)
+  -- this is the canonical "what other installs need to do" reference.
+
 ### v18 (snippet) -- RTL blockquote border flip; launcher auto-syncs snippet
 - Live verification of v17 in the real app surfaced one cosmetic gap:
   Tailwind prose draws the blockquote bar with a physical `border-left`,

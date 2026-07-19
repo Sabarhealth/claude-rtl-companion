@@ -76,40 +76,46 @@ git clone https://github.com/Sabarhealth/claude-rtl-companion.git C:\dev\RTL
 cd C:\dev\RTL
 ```
 
-## One-time setup
+## One-time setup (per machine -- the complete checklist)
 
-The simplest, fully non-interactive command does everything in one shot.
-Safe to run repeatedly (idempotent) and safe for automated installs
-including from within Claude Code itself:
+After this checklist the machine maintains itself: every launch and
+every inject silently `git pull`s this repo and re-syncs the saved
+DevTools snippet from it, so updates propagate with zero manual steps.
+
+**1. Enable dev mode** (idempotent, non-interactive, safe to re-run):
 
 ```powershell
 .\claude-rtl.ps1 -Mode Setup
 ```
 
-This:
-1. Writes `allowDevTools: true` into `%APPDATA%\Claude\config.json`
-   (creates the file if Claude has never launched on this profile;
-   makes a timestamped backup if it exists).
-2. Sets `CLAUDE_DEV_TOOLS=detach` as a user environment variable and
-   broadcasts `WM_SETTINGCHANGE` so Explorer picks it up immediately
-   (no logout required).
-3. Copies the latest injection snippet to your clipboard.
+Writes `allowDevTools: true` into `%APPDATA%\Claude\config.json`
+(timestamped backup first), sets the `CLAUDE_DEV_TOOLS=detach` user env
+var, and copies the current snippet to your clipboard.
 
-Then close Claude completely (including the system tray) and reopen.
-DevTools should auto-open in a separate Chromium window each time Claude
-starts.
+**2. Save the snippet in DevTools** (the only manual step, ever):
 
-On a Hebrew/Arabic Windows display language, also run once:
+Quit Claude fully (tray → Quit) and relaunch. Open DevTools with
+`Ctrl+Alt+I` (switch to an English keyboard layout first if the chord
+does nothing), then: **Sources** tab → sidebar **>>** → **Snippets** →
+right-click → **New snippet** → name it exactly `Claude-RTL` → click
+into the editor → `Ctrl+V` → `Ctrl+S`. The snippet persists across
+restarts and Store updates; from now on the automation re-syncs its
+content from the repo before every run, so you will never paste again.
+
+**3. Install the launchers:**
 
 ```powershell
 .\claude-rtl.ps1 -Mode InstallShortcut
 ```
 
-then pin the new **"Claude (LTR)"** Start Menu entry to your taskbar and
-launch Claude through it from then on. It starts Claude with an
-unmirrored (LTR) window frame, avoiding the ghost preview-pane bug
-(see Troubleshooting), and puts the snippet on your clipboard on every
-launch.
+Creates two Start Menu shortcuts: **"Claude (LTR)"** (pin it to the
+taskbar -- it is the app icon from now on) and **"Claude RTL Inject"**
+(global hotkey `Ctrl+Alt+R`).
+
+**Daily use:** launch Claude via the pinned "Claude (LTR)" icon and do
+nothing else -- unmirrored window, session auto-injected. If a session
+ever renders LTR (e.g. the app opened on the Home screen at launch),
+click into the chat and press `Ctrl+Alt+R`.
 
 ### If you'd rather do the steps individually
 

@@ -200,6 +200,22 @@ function Set-ClaudeDevToolsEnv {
 # ============================================================================
 # Snippet (clipboard)
 # ============================================================================
+function Update-RepoQuietly {
+    # Self-update: fast-forward pull of this repo so every install runs the
+    # latest launcher + snippet without anyone remembering to git pull.
+    # Combined with the editor-sync in Invoke-AutoInject, machines maintain
+    # themselves. Fails silently: offline, no git, local changes (--ff-only),
+    # or a non-repo folder all just skip the update.
+    try {
+        if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return }
+        if (-not (Test-Path (Join-Path $scriptDir '.git'))) { return }
+        $env:GIT_TERMINAL_PROMPT = '0'   # never hang on a credential prompt
+        $null = git -C $scriptDir pull --ff-only --quiet
+        if ($LASTEXITCODE -eq 0) { Write-Info "Repo self-update: up to date." }
+        else { Write-Info "Repo self-update skipped (offline or local changes)." }
+    } catch {}
+}
+
 function Get-Snippet {
     if (-not (Test-Path $SnippetPath)) {
         throw "Snippet missing: $SnippetPath"
@@ -377,6 +393,7 @@ function Invoke-LaunchLtrMode {
             return
         }
 
+        Update-RepoQuietly
         Copy-SnippetToClipboard
         Write-Info "Launching Claude with LTR window chrome:"
         Write-Host "  `"$($info.Exe)`" --lang=en-US --force-ui-direction=ltr"
@@ -430,6 +447,7 @@ function Invoke-InjectMode {
 
     # The clipboard feeds the editor-sync step in Invoke-AutoInject (the
     # saved DevTools snippet is refreshed from the repo on every inject).
+    Update-RepoQuietly
     Copy-SnippetToClipboard
     Invoke-AutoInject -Immediate
 
