@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Launcher: zero-touch auto-inject in `LaunchLtr`
+- After launching Claude, `LaunchLtr` now waits (up to 45s) for the
+  detached DevTools window (`CLAUDE_DEV_TOOLS=detach`), focuses it,
+  verifies via Win32 `GetForegroundWindow` that DevTools really is the
+  foreground window (never types blind), and drives the DevTools
+  Command Menu with synthetic keystrokes: `Ctrl+Shift+P` -> `!1` ->
+  `Enter`, running the user's saved DevTools snippet named `1`.
+- One-time prerequisite: save the snippet as a DevTools snippet named
+  exactly `1` (Sources -> Snippets). The name must be a digit because
+  `SendKeys` characters go through the active keyboard layout -- letters
+  would come out as Hebrew characters under a Hebrew layout; digits are
+  layout-safe.
+- Every failure path (no DevTools window, focus stolen, activation
+  failed) degrades gracefully with a warning; the snippet is already on
+  the clipboard for manual paste.
+- Combined with `InstallShortcut`, the full per-session flow is now one
+  click: pinned icon -> LTR window -> DevTools opens -> snippet runs.
+- Filed the ghost-pane bug upstream:
+  https://github.com/anthropics/claude-code/issues/79038
+
 ### Launcher: `-Mode InstallShortcut` -- pinnable LTR launcher
 - Creates a Start Menu shortcut "Claude (LTR)" with Claude's own icon
   that silently runs `-Mode LaunchLtr` (hidden PowerShell window). Pin

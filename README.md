@@ -137,50 +137,51 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 ## Per-session workflow
 
 The injected CSS lives in the renderer process. When Claude is closed
-the page is gone, and the next launch needs the snippet pasted again.
+the page is gone, and the next launch needs the snippet run again.
 **There is no way to avoid this without modifying `app.asar`** -- and
-that's exactly what we're not doing.
+that's exactly what we're not doing. The closest thing is Option A,
+which automates the re-run completely.
 
-Pick one of three options for the per-session paste, in order of how
-much friction you're willing to trade for setup time:
+### Option A -- Zero-touch (recommended)
 
-### Option A -- DevTools Snippets (recommended, 3 keystrokes per session)
-
-One-time setup: save the snippet inside DevTools' built-in *Snippets*
-panel.
+One-time setup: save the snippet as a DevTools snippet named **`1`**:
 
 1. Run `.\claude-rtl.ps1 -Mode CopySnippet` (puts the snippet on your
    clipboard).
-2. In Claude's DevTools, click the **Sources** tab.
-3. In the left sidebar, click **>>** and select **Snippets**.
-4. Right-click in the snippets pane → **New snippet**. Name it
-   `Claude-RTL`.
-5. Click into the editor on the right, `Ctrl+V`, then `Ctrl+S` to save.
+2. In Claude's DevTools: **Sources** tab → left sidebar **>>** →
+   **Snippets** → right-click → **New snippet**. Name it exactly `1`.
+3. Click into the editor, `Ctrl+V`, then `Ctrl+S` to save.
+4. Run `.\claude-rtl.ps1 -Mode InstallShortcut` and pin the new
+   **"Claude (LTR)"** Start Menu entry to your taskbar.
 
-Per-session: in DevTools, press **`Ctrl+P`**, type `!Claude-RTL`,
-press `Enter`. Done.
+From then on, launching Claude via that pinned icon does everything:
+LTR window chrome, waits for DevTools to auto-open, and runs snippet
+`1` through the DevTools Command Menu (`Ctrl+Shift+P` → `!1` →
+`Enter`) -- no typing, no pasting.
 
-The snippet is saved inside DevTools' own profile and persists across
-Claude restarts and Microsoft Store updates.
+Why the name `1`: the auto-inject drives DevTools with synthetic
+keystrokes, which go through the ACTIVE keyboard layout. Letters would
+come out as Hebrew characters under a Hebrew layout; digits are
+layout-safe. The DevTools snippet persists across Claude restarts and
+Microsoft Store updates.
 
-### Option B -- One-click launcher (`Claude-RTL.cmd`)
+If auto-inject can't run (DevTools window missing, focus stolen), the
+launcher warns and leaves the snippet on your clipboard -- fall back to
+Option C for that session.
 
-A `Claude-RTL.cmd` file is included in this repo. Double-click it (or
-pin it to the taskbar):
+### Option B -- DevTools Snippets, manual trigger (3 keystrokes per session)
 
-1. Copies the snippet to your clipboard.
-2. Launches Claude via the Microsoft Store activation URL.
-3. When DevTools auto-opens, click the **Console** tab, `Ctrl+V`,
-   `Enter`.
-
-To pin to taskbar: right-click `Claude-RTL.cmd` → *Show more options*
-→ *Pin to taskbar*. (Windows 11 may make you create a shortcut first
-and pin the shortcut instead.)
+Same one-time setup as Option A steps 1-3 (any name works, e.g.
+`Claude-RTL`). Per-session: in DevTools, press **`Ctrl+P`**, type
+`!` + the name, press `Enter`.
 
 ### Option C -- Manual paste each session
 
 Run `.\claude-rtl.ps1 -Mode CopySnippet` whenever you launch Claude,
 then `Ctrl+V` and `Enter` in the DevTools Console.
+
+`Claude-RTL.cmd` in the repo root is a double-clickable wrapper for the
+Option A launch path (it delegates to `-Mode LaunchLtr`).
 
 ## Modes
 
@@ -192,7 +193,7 @@ then `Ctrl+V` and `Enter` in the DevTools Console.
 | `DisableDevMode` | Backs up `config.json`, removes the `allowDevTools` key. |
 | `CopySnippet` | Puts the injection snippet on your clipboard. |
 | `PrintSnippet` | Prints the snippet to stdout. |
-| `LaunchLtr` | Copies the snippet, then launches Claude with `--lang=en-US --force-ui-direction=ltr` so the window chrome is NOT mirrored on Hebrew/Arabic Windows display languages. Works around the ghost/duplicate preview-pane layer (see Troubleshooting). If Claude is already open it just focuses the window (Electron's single-instance lock would ignore the flags anyway). The flags are needed on every launch -- there is no persistent setting: the app's `config.json` `locale` key is UI language only and Windows has no per-app locale override for desktop apps. |
+| `LaunchLtr` | Copies the snippet, launches Claude with `--lang=en-US --force-ui-direction=ltr` (unmirrored window chrome on Hebrew/Arabic Windows display languages -- works around the ghost preview-pane layer, see Troubleshooting), then **auto-injects**: waits up to 45s for the detached DevTools window and runs the DevTools snippet named `1` via the Command Menu. If Claude is already open it just focuses the window (Electron's single-instance lock would ignore the flags anyway). The flags are needed on every launch -- there is no persistent setting: the app's `config.json` `locale` key is UI language only and Windows has no per-app locale override for desktop apps. |
 | `InstallShortcut` | Creates a Start Menu shortcut **"Claude (LTR)"** (with Claude's own icon) that silently runs `LaunchLtr`. Pin it to the taskbar and launch Claude through it from then on -- no console, no command. Re-run after a Store update if the icon goes generic. |
 
 All modes are non-interactive (no Y/N prompts). The `-NoConfirm` flag is

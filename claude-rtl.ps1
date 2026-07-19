@@ -374,6 +374,65 @@ function Invoke-LaunchLtrMode {
     Start-Process -FilePath $info.Exe -ArgumentList '--lang=en-US', '--force-ui-direction=ltr'
     Write-Ok "Launched. Window controls should now be on the RIGHT (unmirrored)."
     Write-Info "Snippet is on the clipboard: DevTools Console -> Ctrl+V -> Enter."
+    Invoke-AutoInject
+}
+
+function Invoke-AutoInject {
+    # Zero-touch injection. Prerequisite (one-time): in Claude's DevTools,
+    # save the snippet as a DevTools snippet named exactly "1"
+    # (Sources -> Snippets -> New snippet -> paste -> rename to 1).
+    # DevTools auto-opens on launch when CLAUDE_DEV_TOOLS=detach is set
+    # (-Mode Setup does that); we wait for its window, then drive the
+    # DevTools Command Menu: Ctrl+Shift+P, "!1", Enter -- "!" filters the
+    # menu to snippets, "1" selects ours, Enter runs it.
+    # The snippet name must be a DIGIT: WScript SendKeys types characters
+    # through the ACTIVE keyboard layout, so letters would come out as
+    # Hebrew characters under a Hebrew layout; digits are layout-safe.
+    # If anything is off (no DevTools window, focus stolen), we bail with
+    # a warning -- the snippet is already on the clipboard for manual paste.
+    Add-Type -Namespace ClaudeRtl -Name Win32 -MemberDefinition @'
+[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+[DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder text, int count);
+'@ -ErrorAction SilentlyContinue
+
+    $shell = New-Object -ComObject WScript.Shell
+    $title = $null
+    $deadline = (Get-Date).AddSeconds(45)
+    while ((Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 500
+        $win = Get-Process -Name 'Claude' -ErrorAction SilentlyContinue |
+            Where-Object { $_.MainWindowTitle -like '*DevTools*' } |
+            Select-Object -First 1
+        if ($win) { $title = $win.MainWindowTitle; break }
+    }
+    if (-not $title) {
+        Write-Warn "No DevTools window appeared within 45s -- skipping auto-inject."
+        Write-Info "Is CLAUDE_DEV_TOOLS=detach set? (-Mode Setup does it.) Snippet is on the clipboard for manual paste."
+        return
+    }
+
+    Start-Sleep -Seconds 2   # let DevTools finish loading its panels
+    if (-not $shell.AppActivate($title)) {
+        Write-Warn "Could not focus the DevTools window -- paste manually (snippet is on the clipboard)."
+        return
+    }
+    Start-Sleep -Milliseconds 500
+
+    # Never type blind: confirm DevTools is really the foreground window.
+    $sb = New-Object System.Text.StringBuilder 512
+    [void][ClaudeRtl.Win32]::GetWindowText([ClaudeRtl.Win32]::GetForegroundWindow(), $sb, 512)
+    if ($sb.ToString() -notlike '*DevTools*') {
+        Write-Warn "Foreground window is '$($sb.ToString())', not DevTools -- aborting auto-inject."
+        return
+    }
+
+    $shell.SendKeys('^+p')       # DevTools Command Menu
+    Start-Sleep -Milliseconds 400
+    $shell.SendKeys('!1')        # filter to snippets, pick "1" (! is literal in WScript SendKeys)
+    Start-Sleep -Milliseconds 400
+    $shell.SendKeys('{ENTER}')
+    Write-Ok "Auto-inject sent: DevTools snippet '1' should be running."
+    Write-Info "One-time prerequisite if nothing happened: save the snippet in DevTools as a snippet named exactly '1'."
 }
 
 function Invoke-InstallShortcutMode {
