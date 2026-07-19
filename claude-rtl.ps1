@@ -414,8 +414,10 @@ function Invoke-AutoInject {
     #   1. Wait for the main Claude window; give DevTools a chance to
     #      auto-open (CLAUDE_DEV_TOOLS=detach). If it doesn't, focus the
     #      main window and send Ctrl+Alt+I to open it ourselves.
-    #   2. Focus the DevTools window and drive the Command Menu:
-    #      Ctrl+Shift+P, "!<name>", Enter -- "!" filters to snippets.
+    #   2. Focus the DevTools window and drive Quick Open:
+    #      Ctrl+P, "!<name>", Enter -- the "!" prefix runs snippets.
+    #      NOT Ctrl+Shift+P: the Command Menu pre-fills ">", producing
+    #      ">!name" which matches nothing (bug found live).
     # SendKeys resolves every character (including the 'i'/'p' in the
     # chords) through the window's ACTIVE keyboard layout, so under a
     # Hebrew layout the keystrokes would mis-translate. Before typing into
@@ -491,10 +493,10 @@ function Invoke-AutoInject {
         return
     }
     $esc = $SnippetName -replace '([+^%~(){}\[\]])', '{$1}'  # SendKeys metachars
-    $shell.SendKeys('^+p')       # DevTools Command Menu
+    $shell.SendKeys('^p')        # Quick Open (NOT ^+p -- see note above)
     Start-Sleep -Milliseconds 500
     $shell.SendKeys('!' + $esc)  # "!" is literal in WScript SendKeys (not Alt)
-    Start-Sleep -Milliseconds 500
+    Start-Sleep -Milliseconds 600
     $shell.SendKeys('{ENTER}')
     Write-Ok "Auto-inject sent: DevTools snippet '$SnippetName' should be running."
     Write-Info "One-time prerequisite if nothing happened: save the snippet in DevTools as a snippet named '$SnippetName'."
