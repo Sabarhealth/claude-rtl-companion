@@ -429,18 +429,32 @@ function Invoke-AutoInject {
 [DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder text, int count);
 [DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern IntPtr LoadKeyboardLayout(string pwszKLID, uint Flags);
 [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+[DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern IntPtr FindWindow(string cls, string title);
+[DllImport("user32.dll")] public static extern void SwitchToThisWindow(IntPtr hWnd, bool altTab);
 '@ -ErrorAction SilentlyContinue
 
     $shell = New-Object -ComObject WScript.Shell
 
     # Focus a window by title, verify it really is foreground, then switch
     # its input language to en-US. Returns $true when safe to type.
+    # AppActivate alone loses to Windows' foreground lock when the user is
+    # actively working in another app; SwitchToThisWindow is the fallback.
     function Set-TypingTarget([string]$Title, [string]$Pattern) {
-        if (-not $shell.AppActivate($Title)) { return $false }
+        $null = $shell.AppActivate($Title)
         Start-Sleep -Milliseconds 700
         $fg = [ClaudeRtl.Win32]::GetForegroundWindow()
         $sb = New-Object System.Text.StringBuilder 512
         [void][ClaudeRtl.Win32]::GetWindowText($fg, $sb, 512)
+        if ($sb.ToString() -notlike $Pattern) {
+            $h = [ClaudeRtl.Win32]::FindWindow($null, $Title)
+            if ($h -ne [IntPtr]::Zero) {
+                [ClaudeRtl.Win32]::SwitchToThisWindow($h, $true)
+                Start-Sleep -Milliseconds 700
+                $fg = [ClaudeRtl.Win32]::GetForegroundWindow()
+                $sb = New-Object System.Text.StringBuilder 512
+                [void][ClaudeRtl.Win32]::GetWindowText($fg, $sb, 512)
+            }
+        }
         if ($sb.ToString() -notlike $Pattern) {
             Write-Warn "Foreground window is '$($sb.ToString())', expected '$Pattern' -- not typing."
             return $false
@@ -497,7 +511,13 @@ function Invoke-AutoInject {
     Start-Sleep -Milliseconds 500
     $shell.SendKeys('!' + $esc)  # "!" is literal in WScript SendKeys (not Alt)
     Start-Sleep -Milliseconds 600
-    $shell.SendKeys('{ENTER}')
+    $shell.SendKeys('{ENTER}')   # opens the snippet in the editor...
+    Start-Sleep -Milliseconds 800
+    # ...because on current DevTools (148) "!name"+Enter only OPENS the
+    # snippet -- it does not run it (verified live with screenshots).
+    # Ctrl+Enter runs the snippet open in the editor. If Enter DID run it
+    # already, running twice is harmless: the snippet is idempotent.
+    $shell.SendKeys('^{ENTER}')
     Write-Ok "Auto-inject sent: DevTools snippet '$SnippetName' should be running."
     Write-Info "One-time prerequisite if nothing happened: save the snippet in DevTools as a snippet named '$SnippetName'."
 }

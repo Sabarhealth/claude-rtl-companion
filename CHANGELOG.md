@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Launcher: auto-inject actually runs the snippet (Ctrl+Enter step)
+- Screenshot-driven live debugging (window captures after every
+  keystroke) revealed that on current DevTools (148), Quick Open's
+  `!name` + Enter only OPENS the snippet in the Sources editor -- it
+  does not run it. That is why every earlier attempt "succeeded"
+  keystroke-wise yet nothing executed, and why the user's DevTools
+  showed the snippet tab open.
+- The sequence now ends with `Ctrl+Enter` (run the snippet open in the
+  editor), verified live: green run-indicator on the snippet, Console
+  drawer opened with the result, and the main window flipped to RTL.
+  If Enter ever does run the snippet (older DevTools), running twice is
+  harmless -- the snippet is idempotent.
+- `Set-TypingTarget` gained a `SwitchToThisWindow` fallback:
+  `AppActivate` alone loses to the Windows foreground lock when the
+  user is actively working in another app (observed live against
+  Outlook); the guard still refuses to type if focus cannot be won.
+
 ### Launcher: auto-inject fixes from live end-to-end debugging
 - First real launch showed the snippet not running; live debugging on a
   running instance found two root causes:
