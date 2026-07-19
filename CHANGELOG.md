@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### v15 (snippet) -- override Claude-shipped `dir="ltr"` on Hebrew lists
+- Numbered/bulleted lists whose first item starts with an English acronym
+  (e.g. `1. SHIMI (האחרונה): ...`) were staying LTR: markers on the left,
+  padding on the wrong side, whole list unreadable. Diagnostic in DevTools
+  confirmed Claude Desktop ships the offending `<ol>` with `dir="ltr"`
+  already set (first-strong-char auto-detect on Claude's side).
+- v14 used `ul:not([dir]), ol:not([dir])` as the list selector, so it
+  skipped any list with a pre-existing dir attribute -- including these
+  mis-detected ones. v15 selects `ul, ol` unconditionally and skips only
+  lists that are already `dir="rtl"`. If Hebrew/Arabic appears anywhere
+  in the list's textContent, dir="rtl" is set, overriding Claude's ltr.
+- No changes to tables, epitaxy cards, editable inputs, or CSS.
+
 ### Launcher updates (post-initial-release)
 - Added `-Mode Setup` that does the full one-shot install non-interactively:
   `EnableDevMode` + sets `CLAUDE_DEV_TOOLS=detach` user env var +

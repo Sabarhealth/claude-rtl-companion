@@ -1,6 +1,20 @@
 ﻿// =============================================================================
-// Claude RTL Companion -- DevTools console snippet (v14)
+// Claude RTL Companion -- DevTools console snippet (v15)
 // =============================================================================
+// v15 fixes numbered/bulleted lists staying LTR when Claude Desktop ships them
+// with dir="ltr" already on the <ol>/<ul>. v14 used `ul:not([dir]), ol:not([dir])`
+// which skipped any list with a pre-existing dir attribute. That was a first-
+// strong auto-detect on Claude's side that mis-fires for lists starting with
+// an English acronym (e.g. "1. SHIMI (האחרונה): ...") -- items contain Hebrew
+// but the top of the list looks English, so Claude marks the list LTR and the
+// markers stay glued to the left.
+//
+// v15 selects `ul, ol` unconditionally and skips only lists that are already
+// dir="rtl". If any Hebrew/Arabic character appears in the list's textContent,
+// we set dir="rtl" -- overriding Claude's ltr. Everything else (per-cell
+// direction, epitaxy cards, inputs) is unchanged from v14.
+// =============================================================================
+//
 // v14 extends coverage to Claude Desktop's custom UI components (the
 // "epitaxy" design system), in particular the AskUserQuestion picker
 // (.epitaxy-approval-card) and the branch row (.epitaxy-branch-row).
@@ -206,9 +220,16 @@ pre *, code *, .code-block__code *, [class*="code-block"] *, [class*="CodeBlock"
     let n = 0;
     try {
       // 1. Lists with Hebrew/Arabic content -> dir="rtl" (markers go right).
-      const lists = document.querySelectorAll('ul:not([dir]), ol:not([dir])');
+      //    We deliberately match ol/ul even if they already have a dir. Claude
+      //    Desktop ships some lists with dir="ltr" (looks like a first-strong
+      //    based auto-detect on the source markdown). For a list whose items
+      //    START with an English acronym but contain Hebrew, that's wrong --
+      //    the whole list should be RTL so markers and padding flip. Skip
+      //    only the ones already set to rtl.
+      const lists = document.querySelectorAll('ul, ol');
       for (const list of lists) {
         if (list.closest('pre, code, [class*="code-block"], [class*="CodeBlock"]')) continue;
+        if (list.getAttribute('dir') === 'rtl') continue;
         if (RTL_RX.test(list.textContent || '')) {
           list.setAttribute('dir', 'rtl');
           n++;
@@ -434,5 +455,5 @@ pre *, code *, .code-block__code *, [class*="code-block"] *, [class*="CodeBlock"
     return 'removed';
   };
 
-  return 'Claude RTL v14 applied (' + initialTagged + ' elements tagged; includes <button> + Claude epitaxy cards). Run claudeRtlRemove() to undo.';
+  return 'Claude RTL v15 applied (' + initialTagged + ' elements tagged; overrides Claude-shipped dir="ltr" on Hebrew lists). Run claudeRtlRemove() to undo.';
 })();
