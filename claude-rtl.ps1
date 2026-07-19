@@ -54,7 +54,10 @@ param(
     # mode explicitly.
     [switch]$NoConfirm,
 
-    [string]$SnippetPath
+    [string]$SnippetPath,
+
+    # Name of the saved DevTools snippet that LaunchLtr's auto-inject runs.
+    [string]$SnippetName = 'Claude-RTL'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -379,20 +382,25 @@ function Invoke-LaunchLtrMode {
 
 function Invoke-AutoInject {
     # Zero-touch injection. Prerequisite (one-time): in Claude's DevTools,
-    # save the snippet as a DevTools snippet named exactly "1"
-    # (Sources -> Snippets -> New snippet -> paste -> rename to 1).
+    # save the snippet as a DevTools snippet named "Claude-RTL" (Sources ->
+    # Snippets -> New snippet; override the expected name with -SnippetName).
     # DevTools auto-opens on launch when CLAUDE_DEV_TOOLS=detach is set
     # (-Mode Setup does that); we wait for its window, then drive the
-    # DevTools Command Menu: Ctrl+Shift+P, "!1", Enter -- "!" filters the
-    # menu to snippets, "1" selects ours, Enter runs it.
-    # The snippet name must be a DIGIT: WScript SendKeys types characters
-    # through the ACTIVE keyboard layout, so letters would come out as
-    # Hebrew characters under a Hebrew layout; digits are layout-safe.
+    # DevTools Command Menu: Ctrl+Shift+P, "!Claude-RTL", Enter -- "!"
+    # filters the menu to snippets, Enter runs the match.
+    # SendKeys resolves every character (including the 'p' in the
+    # Ctrl+Shift+P chord) through the window's ACTIVE keyboard layout, so
+    # under a Hebrew layout the keystrokes would mis-translate. Before
+    # typing we therefore ask the DevTools window to switch its input
+    # language to en-US via WM_INPUTLANGCHANGEREQUEST. Input language is
+    # per-window on Windows -- the rest of the desktop keeps its layout.
     # If anything is off (no DevTools window, focus stolen), we bail with
     # a warning -- the snippet is already on the clipboard for manual paste.
     Add-Type -Namespace ClaudeRtl -Name Win32 -MemberDefinition @'
 [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
 [DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder text, int count);
+[DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern IntPtr LoadKeyboardLayout(string pwszKLID, uint Flags);
+[DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
 '@ -ErrorAction SilentlyContinue
 
     $shell = New-Object -ComObject WScript.Shell
@@ -419,20 +427,31 @@ function Invoke-AutoInject {
     Start-Sleep -Milliseconds 500
 
     # Never type blind: confirm DevTools is really the foreground window.
+    $fg = [ClaudeRtl.Win32]::GetForegroundWindow()
     $sb = New-Object System.Text.StringBuilder 512
-    [void][ClaudeRtl.Win32]::GetWindowText([ClaudeRtl.Win32]::GetForegroundWindow(), $sb, 512)
+    [void][ClaudeRtl.Win32]::GetWindowText($fg, $sb, 512)
     if ($sb.ToString() -notlike '*DevTools*') {
         Write-Warn "Foreground window is '$($sb.ToString())', not DevTools -- aborting auto-inject."
         return
     }
 
+    # Force the DevTools window's input language to en-US so SendKeys
+    # translates correctly regardless of the system layout. 0x0050 =
+    # WM_INPUTLANGCHANGEREQUEST; leaving DevTools on English afterwards is
+    # desirable (its console/filters are English anyway).
+    $hkl = [ClaudeRtl.Win32]::LoadKeyboardLayout('00000409', 1)  # 1 = KLF_ACTIVATE
+    [void][ClaudeRtl.Win32]::PostMessage($fg, 0x0050, [IntPtr]::Zero, $hkl)
+    Start-Sleep -Milliseconds 300
+
+    # Escape WScript-SendKeys metacharacters in the snippet name.
+    $esc = $SnippetName -replace '([+^%~(){}\[\]])', '{$1}'
     $shell.SendKeys('^+p')       # DevTools Command Menu
     Start-Sleep -Milliseconds 400
-    $shell.SendKeys('!1')        # filter to snippets, pick "1" (! is literal in WScript SendKeys)
+    $shell.SendKeys('!' + $esc)  # "!" is literal in WScript SendKeys (not Alt)
     Start-Sleep -Milliseconds 400
     $shell.SendKeys('{ENTER}')
-    Write-Ok "Auto-inject sent: DevTools snippet '1' should be running."
-    Write-Info "One-time prerequisite if nothing happened: save the snippet in DevTools as a snippet named exactly '1'."
+    Write-Ok "Auto-inject sent: DevTools snippet '$SnippetName' should be running."
+    Write-Info "One-time prerequisite if nothing happened: save the snippet in DevTools as a snippet named '$SnippetName'."
 }
 
 function Invoke-InstallShortcutMode {

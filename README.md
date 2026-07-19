@@ -144,26 +144,33 @@ which automates the re-run completely.
 
 ### Option A -- Zero-touch (recommended)
 
-One-time setup: save the snippet as a DevTools snippet named **`1`**:
+One-time setup: save the snippet as a DevTools snippet named
+**`Claude-RTL`** (the historical default -- if you already have it from
+Option B, there is nothing to do):
 
 1. Run `.\claude-rtl.ps1 -Mode CopySnippet` (puts the snippet on your
    clipboard).
 2. In Claude's DevTools: **Sources** tab → left sidebar **>>** →
-   **Snippets** → right-click → **New snippet**. Name it exactly `1`.
+   **Snippets** → right-click → **New snippet**. Name it `Claude-RTL`.
 3. Click into the editor, `Ctrl+V`, then `Ctrl+S` to save.
 4. Run `.\claude-rtl.ps1 -Mode InstallShortcut` and pin the new
    **"Claude (LTR)"** Start Menu entry to your taskbar.
 
 From then on, launching Claude via that pinned icon does everything:
-LTR window chrome, waits for DevTools to auto-open, and runs snippet
-`1` through the DevTools Command Menu (`Ctrl+Shift+P` → `!1` →
-`Enter`) -- no typing, no pasting.
+LTR window chrome, waits for DevTools to auto-open, and runs the
+`Claude-RTL` snippet through the DevTools Command Menu
+(`Ctrl+Shift+P` → `!Claude-RTL` → `Enter`) -- no typing, no pasting.
+Saved the snippet under a different name? Pass it:
+`.\claude-rtl.ps1 -Mode LaunchLtr -SnippetName MyName` (and re-run
+`InstallShortcut` after editing the shortcut arguments accordingly).
 
-Why the name `1`: the auto-inject drives DevTools with synthetic
-keystrokes, which go through the ACTIVE keyboard layout. Letters would
-come out as Hebrew characters under a Hebrew layout; digits are
-layout-safe. The DevTools snippet persists across Claude restarts and
-Microsoft Store updates.
+Keyboard-layout note: synthetic keystrokes normally translate through
+the active layout (a Hebrew layout would garble both the
+`Ctrl+Shift+P` chord and the name), so before typing, the launcher
+switches the DevTools window's input language to en-US via
+`WM_INPUTLANGCHANGEREQUEST`. Input language is per-window -- the rest
+of your desktop keeps its layout. The DevTools snippet itself persists
+across Claude restarts and Microsoft Store updates.
 
 If auto-inject can't run (DevTools window missing, focus stolen), the
 launcher warns and leaves the snippet on your clipboard -- fall back to
@@ -171,9 +178,8 @@ Option C for that session.
 
 ### Option B -- DevTools Snippets, manual trigger (3 keystrokes per session)
 
-Same one-time setup as Option A steps 1-3 (any name works, e.g.
-`Claude-RTL`). Per-session: in DevTools, press **`Ctrl+P`**, type
-`!` + the name, press `Enter`.
+Same one-time setup as Option A steps 1-3. Per-session: in DevTools,
+press **`Ctrl+P`**, type `!Claude-RTL`, press `Enter`.
 
 ### Option C -- Manual paste each session
 
@@ -193,7 +199,7 @@ Option A launch path (it delegates to `-Mode LaunchLtr`).
 | `DisableDevMode` | Backs up `config.json`, removes the `allowDevTools` key. |
 | `CopySnippet` | Puts the injection snippet on your clipboard. |
 | `PrintSnippet` | Prints the snippet to stdout. |
-| `LaunchLtr` | Copies the snippet, launches Claude with `--lang=en-US --force-ui-direction=ltr` (unmirrored window chrome on Hebrew/Arabic Windows display languages -- works around the ghost preview-pane layer, see Troubleshooting), then **auto-injects**: waits up to 45s for the detached DevTools window and runs the DevTools snippet named `1` via the Command Menu. If Claude is already open it just focuses the window (Electron's single-instance lock would ignore the flags anyway). The flags are needed on every launch -- there is no persistent setting: the app's `config.json` `locale` key is UI language only and Windows has no per-app locale override for desktop apps. |
+| `LaunchLtr` | Copies the snippet, launches Claude with `--lang=en-US --force-ui-direction=ltr` (unmirrored window chrome on Hebrew/Arabic Windows display languages -- works around the ghost preview-pane layer, see Troubleshooting), then **auto-injects**: waits up to 45s for the detached DevTools window, switches its input language to en-US, and runs the DevTools snippet named `Claude-RTL` (override with `-SnippetName`) via the Command Menu. If Claude is already open it just focuses the window (Electron's single-instance lock would ignore the flags anyway). The flags are needed on every launch -- there is no persistent setting: the app's `config.json` `locale` key is UI language only and Windows has no per-app locale override for desktop apps. |
 | `InstallShortcut` | Creates a Start Menu shortcut **"Claude (LTR)"** (with Claude's own icon) that silently runs `LaunchLtr`. Pin it to the taskbar and launch Claude through it from then on -- no console, no command. Re-run after a Store update if the icon goes generic. |
 
 All modes are non-interactive (no Y/N prompts). The `-NoConfirm` flag is

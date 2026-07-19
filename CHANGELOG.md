@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Launcher: auto-inject runs the existing `Claude-RTL` snippet name
+- The auto-inject no longer requires renaming the DevTools snippet to
+  `1`. It now targets the historical name `Claude-RTL` by default
+  (matching existing installs; override with `-SnippetName`).
+- The digit-only name was a workaround for `SendKeys` translating
+  characters through the active keyboard layout. Root cause fixed
+  instead: before typing, the launcher switches the DevTools window's
+  input language to en-US (`LoadKeyboardLayout` +
+  `WM_INPUTLANGCHANGEREQUEST`, per-window -- the rest of the desktop is
+  unaffected). This also fixes a latent bug where the `Ctrl+Shift+P`
+  chord itself ('p' resolves through the layout too) could mis-fire
+  under a Hebrew layout.
+- SendKeys metacharacters in custom snippet names are escaped.
+
 ### Launcher: zero-touch auto-inject in `LaunchLtr`
 - After launching Claude, `LaunchLtr` now waits (up to 45s) for the
   detached DevTools window (`CLAUDE_DEV_TOOLS=detach`), focuses it,
