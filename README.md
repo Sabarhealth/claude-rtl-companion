@@ -142,39 +142,41 @@ the page is gone, and the next launch needs the snippet run again.
 that's exactly what we're not doing. The closest thing is Option A,
 which automates the re-run completely.
 
-### Option A -- Zero-touch (recommended)
+### Option A -- One hotkey per session (recommended)
+
+Claude Desktop is several separate web documents: a shell
+(`claude.ai/epitaxy` -- sidebar, chrome) plus one **native
+WebContentsView per Claude Code session** (`claude.ai/epitaxy/local_*`
+-- the chat transcript, composer, and terminal live there). The snippet
+must run inside the session's own document; `Ctrl+Alt+I` opens DevTools
+for whichever view has focus.
 
 One-time setup: save the snippet as a DevTools snippet named
-**`Claude-RTL`** (the historical default -- if you already have it from
-Option B, there is nothing to do):
+**`Claude-RTL`**:
 
 1. Run `.\claude-rtl.ps1 -Mode CopySnippet` (puts the snippet on your
    clipboard).
 2. In Claude's DevTools: **Sources** tab → left sidebar **>>** →
    **Snippets** → right-click → **New snippet**. Name it `Claude-RTL`.
-3. Click into the editor, `Ctrl+V`, then `Ctrl+S` to save.
-4. Run `.\claude-rtl.ps1 -Mode InstallShortcut` and pin the new
-   **"Claude (LTR)"** Start Menu entry to your taskbar.
+3. Click into the editor, `Ctrl+V`, then `Ctrl+S` to save. (DevTools
+   snippets persist across restarts and Store updates, and are shared
+   by every DevTools window of the app.)
+4. Run `.\claude-rtl.ps1 -Mode InstallShortcut`; pin **"Claude (LTR)"**
+   to your taskbar.
 
-From then on, launching Claude via that pinned icon does everything:
-LTR window chrome, waits for DevTools to auto-open, and runs the
-`Claude-RTL` snippet through the DevTools Command Menu
-(`Ctrl+Shift+P` → `!Claude-RTL` → `Enter`) -- no typing, no pasting.
-Saved the snippet under a different name? Pass it:
-`.\claude-rtl.ps1 -Mode LaunchLtr -SnippetName MyName` (and re-run
-`InstallShortcut` after editing the shortcut arguments accordingly).
+Per session: launch Claude with the pinned **Claude (LTR)** icon, click
+into your session, press **`Ctrl+Alt+R`**. The Inject automation opens
+DevTools for that session, runs the snippet, closes DevTools, and
+restores your keyboard layout -- about three seconds end to end.
 
-Keyboard-layout note: synthetic keystrokes normally translate through
-the active layout (a Hebrew layout would garble both the
-`Ctrl+Shift+P` chord and the name), so before typing, the launcher
-switches the DevTools window's input language to en-US via
-`WM_INPUTLANGCHANGEREQUEST`. Input language is per-window -- the rest
-of your desktop keeps its layout. The DevTools snippet itself persists
-across Claude restarts and Microsoft Store updates.
+Keyboard-layout note: synthetic keystrokes translate through the active
+layout (a Hebrew layout garbles chords and names), so the automation
+switches the target window's input language to en-US first
+(`WM_INPUTLANGCHANGEREQUEST`, per-window) and restores it afterwards.
 
-If auto-inject can't run (DevTools window missing, focus stolen), the
-launcher warns and leaves the snippet on your clipboard -- fall back to
-Option C for that session.
+If the automation can't run safely (focus stolen, no DevTools window),
+it warns, leaves the snippet on the clipboard, and never types into the
+wrong window -- fall back to Option C for that session.
 
 ### Option B -- DevTools Snippets, manual trigger (3 keystrokes per session)
 
@@ -199,8 +201,9 @@ Option A launch path (it delegates to `-Mode LaunchLtr`).
 | `DisableDevMode` | Backs up `config.json`, removes the `allowDevTools` key. |
 | `CopySnippet` | Puts the injection snippet on your clipboard. |
 | `PrintSnippet` | Prints the snippet to stdout. |
-| `LaunchLtr` | Copies the snippet, launches Claude with `--lang=en-US --force-ui-direction=ltr` (unmirrored window chrome on Hebrew/Arabic Windows display languages -- works around the ghost preview-pane layer, see Troubleshooting), then **auto-injects**: waits up to 45s for the detached DevTools window, switches its input language to en-US, and runs the DevTools snippet named `Claude-RTL` (override with `-SnippetName`) via the Command Menu. If Claude is already open it just focuses the window (Electron's single-instance lock would ignore the flags anyway). The flags are needed on every launch -- there is no persistent setting: the app's `config.json` `locale` key is UI language only and Windows has no per-app locale override for desktop apps. |
-| `InstallShortcut` | Creates a Start Menu shortcut **"Claude (LTR)"** (with Claude's own icon) that silently runs `LaunchLtr`. Pin it to the taskbar and launch Claude through it from then on -- no console, no command. Re-run after a Store update if the icon goes generic. |
+| `LaunchLtr` | Copies the snippet, launches Claude with `--lang=en-US --force-ui-direction=ltr` (unmirrored window chrome on Hebrew/Arabic Windows display languages -- works around the ghost preview-pane layer, see Troubleshooting), then auto-injects the snippet into the shell document (opens DevTools itself via Ctrl+Alt+I, runs the saved `Claude-RTL` snippet, closes DevTools). If Claude is already open it just focuses the window (Electron's single-instance lock would ignore the flags anyway). The flags are needed on every launch -- there is no persistent setting. |
+| `Inject` | **Per-session RTL fix.** Claude Code session views are separate native WebContentsViews -- the shell injection cannot reach them, and `Ctrl+Alt+I` targets the *focused* webview. Click into your session, then run this mode (or press the **Ctrl+Alt+R** hotkey installed by `InstallShortcut`): it opens DevTools for that session, runs the `Claude-RTL` snippet (override name with `-SnippetName`), closes DevTools, and restores your keyboard layout. |
+| `InstallShortcut` | Creates two Start Menu shortcuts with Claude's icon: **"Claude (LTR)"** (silently runs `LaunchLtr` -- pin to taskbar, it IS the app icon from now on) and **"Claude RTL Inject"** (silently runs `Inject`, global hotkey **Ctrl+Alt+R**). Re-run after a Store update if the icons go generic. |
 
 All modes are non-interactive (no Y/N prompts). The `-NoConfirm` flag is
 accepted for backwards compatibility but is now a no-op.

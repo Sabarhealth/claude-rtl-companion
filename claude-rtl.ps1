@@ -45,7 +45,7 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet('Status','Setup','EnableDevMode','DisableDevMode','CopySnippet','PrintSnippet','LaunchLtr','InstallShortcut')]
+    [ValidateSet('Status','Setup','EnableDevMode','DisableDevMode','CopySnippet','PrintSnippet','LaunchLtr','InstallShortcut','Inject')]
     [string]$Mode = 'Status',
 
     # Backwards-compat: no-op. Prompts have been removed; the script always
@@ -406,7 +406,46 @@ function Find-DevToolsWindow {
     return $null
 }
 
+function Invoke-InjectMode {
+    # Per-session injection. Claude's session views are native
+    # WebContentsViews (verified: app.asar has 8x WebContentsView/
+    # addChildView, zero <webview> tags), so shell-document JS cannot
+    # reach them and Ctrl+Alt+I targets the FOCUSED webview. Flow:
+    # the user clicks into their session, then triggers this mode
+    # (pinned shortcut / Ctrl+Alt+R hotkey); we open DevTools for that
+    # session, run the saved snippet, close DevTools, restore the
+    # user's keyboard layout.
+    Add-Type -Namespace ClaudeRtlI -Name Win32 -MemberDefinition @'
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr pid);
+[DllImport("user32.dll")] public static extern IntPtr GetKeyboardLayout(uint thread);
+[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+[DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+'@ -ErrorAction SilentlyContinue
+
+    $running = @(Get-RunningClaudeMainProcesses)
+    if ($running.Count -eq 0) {
+        Write-Err "Claude is not running. Launch it first (Claude-RTL.cmd), open your session, then run Inject."
+        exit 1
+    }
+
+    Invoke-AutoInject -Immediate
+
+    # Restore the user's keyboard layout on the MAIN window -- the en-US
+    # switch we did for the chords would otherwise silently leave them
+    # typing English in the chat.
+    $shell2 = New-Object -ComObject WScript.Shell
+    if ($shell2.AppActivate('Claude')) {
+        Start-Sleep -Milliseconds 400
+        $fg = [ClaudeRtlI.Win32]::GetForegroundWindow()
+        # Post the user's DEFAULT layout (first in their list) back.
+        $tid = [ClaudeRtlI.Win32]::GetWindowThreadProcessId($fg, [IntPtr]::Zero)
+        $cur = [ClaudeRtlI.Win32]::GetKeyboardLayout(0)  # calling thread's = user default-ish
+        [void][ClaudeRtlI.Win32]::PostMessage($fg, 0x0050, [IntPtr]::Zero, $cur)
+    }
+}
+
 function Invoke-AutoInject {
+    param([switch]$Immediate)
     # Zero-touch injection. Prerequisite (one-time): in Claude's DevTools,
     # save the snippet as a DevTools snippet named "Claude-RTL" (Sources ->
     # Snippets -> New snippet; override the expected name with -SnippetName).
@@ -466,27 +505,33 @@ function Invoke-AutoInject {
     }
 
     # -- Step 1: get a DevTools window on screen ----------------------------
-    # Wait for the app's main window first (fresh launch takes a few seconds).
-    $mainDeadline = (Get-Date).AddSeconds(60)
-    $main = $null
-    while ((Get-Date) -lt $mainDeadline) {
-        Start-Sleep -Milliseconds 500
-        $main = Get-Process -Name 'Claude' -ErrorAction SilentlyContinue |
-            Where-Object { $_.MainWindowTitle -eq 'Claude' } | Select-Object -First 1
-        if ($main) { break }
-    }
-    if (-not $main) {
-        Write-Warn "Claude main window not found within 60s -- skipping auto-inject."
-        return
+    if (-not $Immediate) {
+        # Fresh launch: wait for the app's main window first.
+        $mainDeadline = (Get-Date).AddSeconds(60)
+        $main = $null
+        while ((Get-Date) -lt $mainDeadline) {
+            Start-Sleep -Milliseconds 500
+            $main = Get-Process -Name 'Claude' -ErrorAction SilentlyContinue |
+                Where-Object { $_.MainWindowTitle -eq 'Claude' } | Select-Object -First 1
+            if ($main) { break }
+        }
+        if (-not $main) {
+            Write-Warn "Claude main window not found within 60s -- skipping auto-inject."
+            return
+        }
     }
 
-    # Give CLAUDE_DEV_TOOLS=detach a chance to auto-open DevTools...
-    $title = Find-DevToolsWindow -TimeoutSec 10
+    # Give CLAUDE_DEV_TOOLS=detach a chance to auto-open DevTools (skip the
+    # grace in Immediate mode -- the user just asked for injection NOW)...
+    $title = if ($Immediate) { Find-DevToolsWindow -TimeoutSec 1 } else { Find-DevToolsWindow -TimeoutSec 10 }
     if (-not $title) {
         # ...and open it ourselves when it doesn't (observed: the env var
-        # does not reliably auto-open on current builds).
-        Write-Info "DevTools did not auto-open; sending Ctrl+Alt+I to the main window."
-        Start-Sleep -Seconds 2   # let the renderer finish loading first
+        # does not reliably auto-open on current builds). Ctrl+Alt+I opens
+        # DevTools for the FOCUSED webview: at launch that is the shell
+        # document; inside a session it is the session's WebContentsView --
+        # which is exactly what Inject mode wants.
+        Write-Info "Opening DevTools (Ctrl+Alt+I) for the focused view."
+        if (-not $Immediate) { Start-Sleep -Seconds 2 }   # let the renderer load
         if (-not (Set-TypingTarget 'Claude' 'Claude*')) {
             Write-Warn "Could not safely focus the Claude window -- paste manually (snippet is on the clipboard)."
             return
@@ -518,17 +563,31 @@ function Invoke-AutoInject {
     # Ctrl+Enter runs the snippet open in the editor. If Enter DID run it
     # already, running twice is harmless: the snippet is idempotent.
     $shell.SendKeys('^{ENTER}')
+    Start-Sleep -Milliseconds 900
+    # Close the DevTools window we opened -- the injected style/observers
+    # live in the page and survive DevTools closing.
+    $fgNow = [ClaudeRtl.Win32]::GetForegroundWindow()
+    $sbNow = New-Object System.Text.StringBuilder 512
+    [void][ClaudeRtl.Win32]::GetWindowText($fgNow, $sbNow, 512)
+    if ($sbNow.ToString() -like $DevToolsTitlePattern) {
+        $shell.SendKeys('%{F4}')
+    }
     Write-Ok "Auto-inject sent: DevTools snippet '$SnippetName' should be running."
     Write-Info "One-time prerequisite if nothing happened: save the snippet in DevTools as a snippet named '$SnippetName'."
 }
 
 function Invoke-InstallShortcutMode {
-    # Creates a Start Menu shortcut "Claude (LTR)" that silently runs
-    # -Mode LaunchLtr, with Claude's own icon. Pin it to the taskbar and
-    # launch Claude through it from then on -- no console, no command.
+    # Creates two Start Menu shortcuts with Claude's own icon:
+    #   "Claude (LTR)"        -- silently runs -Mode LaunchLtr. Pin it to
+    #                            the taskbar; it IS the app icon from now on.
+    #   "Claude RTL Inject"   -- silently runs -Mode Inject, with global
+    #                            hotkey Ctrl+Alt+R. Press it while inside a
+    #                            session to inject that session's webview.
     $info = Get-ClaudeExeInfo
-    $lnkPath = Join-Path ([Environment]::GetFolderPath('StartMenu')) 'Programs\Claude (LTR).lnk'
+    $programs = Join-Path ([Environment]::GetFolderPath('StartMenu')) 'Programs'
     $shell = New-Object -ComObject WScript.Shell
+
+    $lnkPath = Join-Path $programs 'Claude (LTR).lnk'
     $lnk = $shell.CreateShortcut($lnkPath)
     $lnk.TargetPath = 'powershell.exe'
     $lnk.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$PSCommandPath`" -Mode LaunchLtr"
@@ -538,9 +597,22 @@ function Invoke-InstallShortcutMode {
     $lnk.Description = 'Claude Desktop with LTR window chrome (RTL ghost-pane workaround)'
     $lnk.Save()
     Write-Ok "Shortcut created: $lnkPath"
-    Write-Info "Search 'Claude (LTR)' in the Start menu and pin it to the taskbar."
-    Write-Info "Launch Claude through it from now on. Clicking it while Claude is open just focuses the window."
-    Write-Warn "After a Microsoft Store update the ICON may go generic (the shortcut keeps working); re-run -Mode InstallShortcut to refresh it."
+
+    $injPath = Join-Path $programs 'Claude RTL Inject.lnk'
+    $inj = $shell.CreateShortcut($injPath)
+    $inj.TargetPath = 'powershell.exe'
+    $inj.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$PSCommandPath`" -Mode Inject"
+    $inj.WorkingDirectory = $scriptDir
+    $inj.IconLocation = "$($info.Exe),0"
+    $inj.WindowStyle = 7
+    $inj.Hotkey = 'Ctrl+Alt+R'
+    $inj.Description = 'Inject the Claude-RTL snippet into the focused Claude session (Ctrl+Alt+R)'
+    $inj.Save()
+    Write-Ok "Shortcut created: $injPath (hotkey: Ctrl+Alt+R)"
+
+    Write-Info "Pin 'Claude (LTR)' to the taskbar and launch Claude through it from now on."
+    Write-Info "Inside a session, press Ctrl+Alt+R (or run 'Claude RTL Inject') to RTL-fix that session."
+    Write-Warn "After a Microsoft Store update the ICONS may go generic (shortcuts keep working); re-run -Mode InstallShortcut to refresh."
 }
 
 # ============================================================================
@@ -555,4 +627,5 @@ switch ($Mode) {
     'PrintSnippet'   { Invoke-PrintSnippetMode }
     'LaunchLtr'      { Invoke-LaunchLtrMode }
     'InstallShortcut' { Invoke-InstallShortcutMode }
+    'Inject'         { Invoke-InjectMode }
 }

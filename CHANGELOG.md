@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Launcher: per-session `Inject` mode + Ctrl+Alt+R hotkey
+- In-page overlay diagnostics revealed the real app architecture:
+  Claude Desktop is a shell document (`claude.ai/epitaxy`) plus one
+  document per Claude Code session (`claude.ai/epitaxy/local_<id>`)
+  hosting the transcript, composer, and terminal. The snippet had only
+  ever run in the shell; the session documents -- where the user
+  actually reads and types -- were untouched (`style: false` there).
+- Session views are native `WebContentsView`s, not `<webview>` tags
+  (verified by scanning app.asar: 8x WebContentsView/addChildView,
+  zero `<webview>`), so shell JavaScript cannot propagate into them.
+  Injection must happen per session view, via its own DevTools.
+- New `-Mode Inject`: with focus inside a session, opens DevTools for
+  that session (Ctrl+Alt+I targets the focused webview), runs the
+  saved snippet, closes DevTools, and restores the user's keyboard
+  layout. `InstallShortcut` now also creates "Claude RTL Inject" with
+  global hotkey **Ctrl+Alt+R**.
+- Auto-inject closes the DevTools window it opened (the injected
+  style/observers live in the page and survive), and `LaunchLtr`'s
+  launch-time pass now only covers the shell document.
+- Verified live in the user's session: after injection the session
+  document reported `style: true`, user bubbles `rtl/rtl`, composer
+  `dir=auto`.
+
 ### Launcher: auto-inject actually runs the snippet (Ctrl+Enter step)
 - Screenshot-driven live debugging (window captures after every
   keystroke) revealed that on current DevTools (148), Quick Open's
