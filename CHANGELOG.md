@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Launcher: auto-inject fixes from live end-to-end debugging
+- First real launch showed the snippet not running; live debugging on a
+  running instance found two root causes:
+  1. The detached DevTools window title is **"Developer Tools - <url>"**,
+     not "DevTools" -- the wait loop's title pattern could never match.
+  2. `CLAUDE_DEV_TOOLS=detach` did not auto-open DevTools at all on the
+     current build, so there was no window to find in the first place.
+- Auto-inject now: waits for the main Claude window, gives auto-open a
+  10s grace, then opens DevTools itself (focus main window, switch its
+  input language to en-US, send Ctrl+Alt+I -- verified working), then
+  waits for the `*Developer Tools*` window and drives the Command Menu
+  as before. Every keystroke target goes through the same
+  focus-verify + layout-switch helper.
+- `LaunchLtr` now writes a transcript to `%TEMP%\claude-rtl-launch.log`
+  so failures are diagnosable when run hidden from the pinned shortcut.
+- The full sequence (open DevTools via Ctrl+Alt+I -> Command Menu ->
+  `!Claude-RTL` -> Enter) was executed live end-to-end on a running
+  Claude Desktop 1.22209.3.0 and confirmed to reach the snippet.
+
 ### Launcher: auto-inject runs the existing `Claude-RTL` snippet name
 - The auto-inject no longer requires renaming the DevTools snippet to
   `1`. It now targets the historical name `Claude-RTL` by default

@@ -359,43 +359,69 @@ function Invoke-LaunchLtrMode {
     # that inside the page). The flags are needed on EVERY launch: the app's
     # config.json "locale" key is UI language only and does not stop the
     # mirroring, so there is nothing persistent to set.
-    $info = Get-ClaudeExeInfo
-    $running = @(Get-RunningClaudeMainProcesses)
-    if ($running.Count -gt 0) {
-        # Electron's single-instance lock makes a second launch ignore CLI
-        # flags -- launching again would silently do nothing. Behave like a
-        # normal app icon instead: focus the existing window.
-        Write-Info "Claude is already running (PID $($running[0].ProcessId)); focusing it."
-        Write-Info "For the LTR window chrome to apply, quit Claude fully (tray -> Quit) and launch again."
-        Start-Process explorer.exe $info.AppUmi
-        return
-    }
+    #
+    # The pinned shortcut runs this hidden, so also log to a file --
+    # otherwise auto-inject failures are invisible.
+    $log = Join-Path $env:TEMP 'claude-rtl-launch.log'
+    try { Start-Transcript -Path $log -ErrorAction SilentlyContinue | Out-Null } catch {}
+    try {
+        $info = Get-ClaudeExeInfo
+        $running = @(Get-RunningClaudeMainProcesses)
+        if ($running.Count -gt 0) {
+            # Electron's single-instance lock makes a second launch ignore CLI
+            # flags -- launching again would silently do nothing. Behave like a
+            # normal app icon instead: focus the existing window.
+            Write-Info "Claude is already running (PID $($running[0].ProcessId)); focusing it."
+            Write-Info "For the LTR window chrome to apply, quit Claude fully (tray -> Quit) and launch again."
+            Start-Process explorer.exe $info.AppUmi
+            return
+        }
 
-    Copy-SnippetToClipboard
-    Write-Info "Launching Claude with LTR window chrome:"
-    Write-Host "  `"$($info.Exe)`" --lang=en-US --force-ui-direction=ltr"
-    Start-Process -FilePath $info.Exe -ArgumentList '--lang=en-US', '--force-ui-direction=ltr'
-    Write-Ok "Launched. Window controls should now be on the RIGHT (unmirrored)."
-    Write-Info "Snippet is on the clipboard: DevTools Console -> Ctrl+V -> Enter."
-    Invoke-AutoInject
+        Copy-SnippetToClipboard
+        Write-Info "Launching Claude with LTR window chrome:"
+        Write-Host "  `"$($info.Exe)`" --lang=en-US --force-ui-direction=ltr"
+        Start-Process -FilePath $info.Exe -ArgumentList '--lang=en-US', '--force-ui-direction=ltr'
+        Write-Ok "Launched. Window controls should now be on the RIGHT (unmirrored)."
+        Write-Info "Snippet is on the clipboard: DevTools Console -> Ctrl+V -> Enter."
+        Invoke-AutoInject
+    } finally {
+        try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch {}
+    }
+}
+
+# The detached DevTools window title is "Developer Tools - <url>"
+# (verified live on Claude Desktop 1.22209.3.0; it is NOT "DevTools").
+$DevToolsTitlePattern = '*Developer Tools*'
+
+function Find-DevToolsWindow {
+    param([int]$TimeoutSec)
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    while ((Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 500
+        $win = Get-Process -Name 'Claude' -ErrorAction SilentlyContinue |
+            Where-Object { $_.MainWindowTitle -like $DevToolsTitlePattern } |
+            Select-Object -First 1
+        if ($win) { return $win.MainWindowTitle }
+    }
+    return $null
 }
 
 function Invoke-AutoInject {
     # Zero-touch injection. Prerequisite (one-time): in Claude's DevTools,
     # save the snippet as a DevTools snippet named "Claude-RTL" (Sources ->
     # Snippets -> New snippet; override the expected name with -SnippetName).
-    # DevTools auto-opens on launch when CLAUDE_DEV_TOOLS=detach is set
-    # (-Mode Setup does that); we wait for its window, then drive the
-    # DevTools Command Menu: Ctrl+Shift+P, "!Claude-RTL", Enter -- "!"
-    # filters the menu to snippets, Enter runs the match.
-    # SendKeys resolves every character (including the 'p' in the
-    # Ctrl+Shift+P chord) through the window's ACTIVE keyboard layout, so
-    # under a Hebrew layout the keystrokes would mis-translate. Before
-    # typing we therefore ask the DevTools window to switch its input
-    # language to en-US via WM_INPUTLANGCHANGEREQUEST. Input language is
-    # per-window on Windows -- the rest of the desktop keeps its layout.
-    # If anything is off (no DevTools window, focus stolen), we bail with
-    # a warning -- the snippet is already on the clipboard for manual paste.
+    # Flow (each step verified live):
+    #   1. Wait for the main Claude window; give DevTools a chance to
+    #      auto-open (CLAUDE_DEV_TOOLS=detach). If it doesn't, focus the
+    #      main window and send Ctrl+Alt+I to open it ourselves.
+    #   2. Focus the DevTools window and drive the Command Menu:
+    #      Ctrl+Shift+P, "!<name>", Enter -- "!" filters to snippets.
+    # SendKeys resolves every character (including the 'i'/'p' in the
+    # chords) through the window's ACTIVE keyboard layout, so under a
+    # Hebrew layout the keystrokes would mis-translate. Before typing into
+    # any window we switch its input language to en-US via
+    # WM_INPUTLANGCHANGEREQUEST -- per-window, the desktop keeps its layout.
+    # Every bail-out leaves the snippet on the clipboard for manual paste.
     Add-Type -Namespace ClaudeRtl -Name Win32 -MemberDefinition @'
 [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
 [DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder text, int count);
@@ -404,51 +430,71 @@ function Invoke-AutoInject {
 '@ -ErrorAction SilentlyContinue
 
     $shell = New-Object -ComObject WScript.Shell
-    $title = $null
-    $deadline = (Get-Date).AddSeconds(45)
-    while ((Get-Date) -lt $deadline) {
+
+    # Focus a window by title, verify it really is foreground, then switch
+    # its input language to en-US. Returns $true when safe to type.
+    function Set-TypingTarget([string]$Title, [string]$Pattern) {
+        if (-not $shell.AppActivate($Title)) { return $false }
+        Start-Sleep -Milliseconds 700
+        $fg = [ClaudeRtl.Win32]::GetForegroundWindow()
+        $sb = New-Object System.Text.StringBuilder 512
+        [void][ClaudeRtl.Win32]::GetWindowText($fg, $sb, 512)
+        if ($sb.ToString() -notlike $Pattern) {
+            Write-Warn "Foreground window is '$($sb.ToString())', expected '$Pattern' -- not typing."
+            return $false
+        }
+        $hkl = [ClaudeRtl.Win32]::LoadKeyboardLayout('00000409', 1)  # KLF_ACTIVATE
+        [void][ClaudeRtl.Win32]::PostMessage($fg, 0x0050, [IntPtr]::Zero, $hkl)  # WM_INPUTLANGCHANGEREQUEST
+        Start-Sleep -Milliseconds 300
+        return $true
+    }
+
+    # -- Step 1: get a DevTools window on screen ----------------------------
+    # Wait for the app's main window first (fresh launch takes a few seconds).
+    $mainDeadline = (Get-Date).AddSeconds(60)
+    $main = $null
+    while ((Get-Date) -lt $mainDeadline) {
         Start-Sleep -Milliseconds 500
-        $win = Get-Process -Name 'Claude' -ErrorAction SilentlyContinue |
-            Where-Object { $_.MainWindowTitle -like '*DevTools*' } |
-            Select-Object -First 1
-        if ($win) { $title = $win.MainWindowTitle; break }
+        $main = Get-Process -Name 'Claude' -ErrorAction SilentlyContinue |
+            Where-Object { $_.MainWindowTitle -eq 'Claude' } | Select-Object -First 1
+        if ($main) { break }
+    }
+    if (-not $main) {
+        Write-Warn "Claude main window not found within 60s -- skipping auto-inject."
+        return
+    }
+
+    # Give CLAUDE_DEV_TOOLS=detach a chance to auto-open DevTools...
+    $title = Find-DevToolsWindow -TimeoutSec 10
+    if (-not $title) {
+        # ...and open it ourselves when it doesn't (observed: the env var
+        # does not reliably auto-open on current builds).
+        Write-Info "DevTools did not auto-open; sending Ctrl+Alt+I to the main window."
+        Start-Sleep -Seconds 2   # let the renderer finish loading first
+        if (-not (Set-TypingTarget 'Claude' 'Claude*')) {
+            Write-Warn "Could not safely focus the Claude window -- paste manually (snippet is on the clipboard)."
+            return
+        }
+        $shell.SendKeys('^%i')   # Ctrl+Alt+I
+        $title = Find-DevToolsWindow -TimeoutSec 15
     }
     if (-not $title) {
-        Write-Warn "No DevTools window appeared within 45s -- skipping auto-inject."
-        Write-Info "Is CLAUDE_DEV_TOOLS=detach set? (-Mode Setup does it.) Snippet is on the clipboard for manual paste."
+        Write-Warn "No DevTools window appeared -- skipping auto-inject. Is allowDevTools enabled? (-Mode Setup)."
         return
     }
+    Write-Info "DevTools window: '$title'"
 
+    # -- Step 2: run the saved snippet via the Command Menu -----------------
     Start-Sleep -Seconds 2   # let DevTools finish loading its panels
-    if (-not $shell.AppActivate($title)) {
-        Write-Warn "Could not focus the DevTools window -- paste manually (snippet is on the clipboard)."
+    if (-not (Set-TypingTarget $title $DevToolsTitlePattern)) {
+        Write-Warn "Could not safely focus the DevTools window -- paste manually (snippet is on the clipboard)."
         return
     }
-    Start-Sleep -Milliseconds 500
-
-    # Never type blind: confirm DevTools is really the foreground window.
-    $fg = [ClaudeRtl.Win32]::GetForegroundWindow()
-    $sb = New-Object System.Text.StringBuilder 512
-    [void][ClaudeRtl.Win32]::GetWindowText($fg, $sb, 512)
-    if ($sb.ToString() -notlike '*DevTools*') {
-        Write-Warn "Foreground window is '$($sb.ToString())', not DevTools -- aborting auto-inject."
-        return
-    }
-
-    # Force the DevTools window's input language to en-US so SendKeys
-    # translates correctly regardless of the system layout. 0x0050 =
-    # WM_INPUTLANGCHANGEREQUEST; leaving DevTools on English afterwards is
-    # desirable (its console/filters are English anyway).
-    $hkl = [ClaudeRtl.Win32]::LoadKeyboardLayout('00000409', 1)  # 1 = KLF_ACTIVATE
-    [void][ClaudeRtl.Win32]::PostMessage($fg, 0x0050, [IntPtr]::Zero, $hkl)
-    Start-Sleep -Milliseconds 300
-
-    # Escape WScript-SendKeys metacharacters in the snippet name.
-    $esc = $SnippetName -replace '([+^%~(){}\[\]])', '{$1}'
+    $esc = $SnippetName -replace '([+^%~(){}\[\]])', '{$1}'  # SendKeys metachars
     $shell.SendKeys('^+p')       # DevTools Command Menu
-    Start-Sleep -Milliseconds 400
+    Start-Sleep -Milliseconds 500
     $shell.SendKeys('!' + $esc)  # "!" is literal in WScript SendKeys (not Alt)
-    Start-Sleep -Milliseconds 400
+    Start-Sleep -Milliseconds 500
     $shell.SendKeys('{ENTER}')
     Write-Ok "Auto-inject sent: DevTools snippet '$SnippetName' should be running."
     Write-Info "One-time prerequisite if nothing happened: save the snippet in DevTools as a snippet named '$SnippetName'."
