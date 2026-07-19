@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Launcher: `-Mode InstallShortcut` -- pinnable LTR launcher
+- Creates a Start Menu shortcut "Claude (LTR)" with Claude's own icon
+  that silently runs `-Mode LaunchLtr` (hidden PowerShell window). Pin
+  it to the taskbar and launching Claude feels native again -- no
+  console, no command to remember.
+- `LaunchLtr` behavior change: if Claude is already running it now
+  FOCUSES the existing window (like a normal app icon) instead of
+  erroring -- Electron's single-instance lock would ignore the flags on
+  a second launch either way.
+- Verified there is no persistent alternative: the `locale` key in
+  `%APPDATA%\Claude\config.json` was already `en-US` in a pre-bug
+  backup, i.e. it controls app UI language only and does not stop the
+  OS-locale window mirroring. Windows offers no per-app locale override
+  for desktop (full-trust) apps, so the CLI flags must be applied on
+  every launch -- hence the shortcut.
+- Shortcut caveat: after a Microsoft Store update the icon may go
+  generic (versioned exe path); the shortcut keeps working because it
+  resolves the exe dynamically at launch. Re-run `InstallShortcut` to
+  refresh the icon.
+
 ### Launcher: `-Mode LaunchLtr` -- ghost preview-pane workaround
 - New launcher mode that starts Claude Desktop with
   `--lang=en-US --force-ui-direction=ltr`, forcing an unmirrored (LTR)

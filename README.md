@@ -99,6 +99,18 @@ Then close Claude completely (including the system tray) and reopen.
 DevTools should auto-open in a separate Chromium window each time Claude
 starts.
 
+On a Hebrew/Arabic Windows display language, also run once:
+
+```powershell
+.\claude-rtl.ps1 -Mode InstallShortcut
+```
+
+then pin the new **"Claude (LTR)"** Start Menu entry to your taskbar and
+launch Claude through it from then on. It starts Claude with an
+unmirrored (LTR) window frame, avoiding the ghost preview-pane bug
+(see Troubleshooting), and puts the snippet on your clipboard on every
+launch.
+
 ### If you'd rather do the steps individually
 
 ```powershell
@@ -180,7 +192,8 @@ then `Ctrl+V` and `Enter` in the DevTools Console.
 | `DisableDevMode` | Backs up `config.json`, removes the `allowDevTools` key. |
 | `CopySnippet` | Puts the injection snippet on your clipboard. |
 | `PrintSnippet` | Prints the snippet to stdout. |
-| `LaunchLtr` | Copies the snippet, then launches Claude with `--lang=en-US --force-ui-direction=ltr` so the window chrome is NOT mirrored on Hebrew/Arabic Windows display languages. Works around the ghost/duplicate preview-pane layer (see Troubleshooting). Refuses to run while Claude is already open (Electron's single-instance lock would ignore the flags). |
+| `LaunchLtr` | Copies the snippet, then launches Claude with `--lang=en-US --force-ui-direction=ltr` so the window chrome is NOT mirrored on Hebrew/Arabic Windows display languages. Works around the ghost/duplicate preview-pane layer (see Troubleshooting). If Claude is already open it just focuses the window (Electron's single-instance lock would ignore the flags anyway). The flags are needed on every launch -- there is no persistent setting: the app's `config.json` `locale` key is UI language only and Windows has no per-app locale override for desktop apps. |
+| `InstallShortcut` | Creates a Start Menu shortcut **"Claude (LTR)"** (with Claude's own icon) that silently runs `LaunchLtr`. Pin it to the taskbar and launch Claude through it from then on -- no console, no command. Re-run after a Store update if the icon goes generic. |
 
 All modes are non-interactive (no Y/N prompts). The `-NoConfirm` flag is
 accepted for backwards compatibility but is now a no-op.

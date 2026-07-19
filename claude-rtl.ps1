@@ -45,7 +45,7 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet('Status','Setup','EnableDevMode','DisableDevMode','CopySnippet','PrintSnippet','LaunchLtr')]
+    [ValidateSet('Status','Setup','EnableDevMode','DisableDevMode','CopySnippet','PrintSnippet','LaunchLtr','InstallShortcut')]
     [string]$Mode = 'Status',
 
     # Backwards-compat: no-op. Prompts have been removed; the script always
@@ -333,6 +333,19 @@ function Invoke-PrintSnippetMode {
     Get-Snippet | Write-Host
 }
 
+function Get-ClaudeExeInfo {
+    $pkg = Get-AppxPackage -Name 'Claude' -ErrorAction SilentlyContinue
+    if (-not $pkg) { throw "Claude Desktop (MSIX) not installed." }
+    $app = (Get-AppxPackageManifest $pkg).Package.Applications.Application |
+        Select-Object -First 1
+    $exe = Join-Path $pkg.InstallLocation $app.Executable
+    if (-not (Test-Path $exe)) { throw "Claude executable not found at: $exe" }
+    [PSCustomObject]@{
+        Exe    = $exe
+        AppUmi = "shell:AppsFolder\$($pkg.PackageFamilyName)!$($app.Id)"
+    }
+}
+
 function Invoke-LaunchLtrMode {
     # On Hebrew/Arabic Windows display languages, Chromium mirrors the whole
     # window (RTL frame). Claude Desktop then draws its embedded browser/
@@ -340,28 +353,48 @@ function Invoke-LaunchLtrMode {
     # space and a snapshot layer in the other, so a "ghost" copy floats over
     # the chat. Forcing the app's UI locale/direction to LTR sidesteps the
     # mirroring entirely. Chat content RTL is unaffected (the snippet handles
-    # that inside the page).
+    # that inside the page). The flags are needed on EVERY launch: the app's
+    # config.json "locale" key is UI language only and does not stop the
+    # mirroring, so there is nothing persistent to set.
+    $info = Get-ClaudeExeInfo
     $running = @(Get-RunningClaudeMainProcesses)
     if ($running.Count -gt 0) {
-        Write-Err "Claude is already running (PID $($running[0].ProcessId))."
-        Write-Err "Electron's single-instance lock makes a second launch ignore CLI flags."
-        Write-Info "Quit Claude fully (tray icon -> Quit), then run this mode again."
-        exit 1
+        # Electron's single-instance lock makes a second launch ignore CLI
+        # flags -- launching again would silently do nothing. Behave like a
+        # normal app icon instead: focus the existing window.
+        Write-Info "Claude is already running (PID $($running[0].ProcessId)); focusing it."
+        Write-Info "For the LTR window chrome to apply, quit Claude fully (tray -> Quit) and launch again."
+        Start-Process explorer.exe $info.AppUmi
+        return
     }
-
-    $pkg = Get-AppxPackage -Name 'Claude' -ErrorAction SilentlyContinue
-    if (-not $pkg) { throw "Claude Desktop (MSIX) not installed." }
-    $rel = (Get-AppxPackageManifest $pkg).Package.Applications.Application |
-        Select-Object -First 1 -ExpandProperty Executable
-    $exe = Join-Path $pkg.InstallLocation $rel
-    if (-not (Test-Path $exe)) { throw "Claude executable not found at: $exe" }
 
     Copy-SnippetToClipboard
     Write-Info "Launching Claude with LTR window chrome:"
-    Write-Host "  `"$exe`" --lang=en-US --force-ui-direction=ltr"
-    Start-Process -FilePath $exe -ArgumentList '--lang=en-US', '--force-ui-direction=ltr'
+    Write-Host "  `"$($info.Exe)`" --lang=en-US --force-ui-direction=ltr"
+    Start-Process -FilePath $info.Exe -ArgumentList '--lang=en-US', '--force-ui-direction=ltr'
     Write-Ok "Launched. Window controls should now be on the RIGHT (unmirrored)."
     Write-Info "Snippet is on the clipboard: DevTools Console -> Ctrl+V -> Enter."
+}
+
+function Invoke-InstallShortcutMode {
+    # Creates a Start Menu shortcut "Claude (LTR)" that silently runs
+    # -Mode LaunchLtr, with Claude's own icon. Pin it to the taskbar and
+    # launch Claude through it from then on -- no console, no command.
+    $info = Get-ClaudeExeInfo
+    $lnkPath = Join-Path ([Environment]::GetFolderPath('StartMenu')) 'Programs\Claude (LTR).lnk'
+    $shell = New-Object -ComObject WScript.Shell
+    $lnk = $shell.CreateShortcut($lnkPath)
+    $lnk.TargetPath = 'powershell.exe'
+    $lnk.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$PSCommandPath`" -Mode LaunchLtr"
+    $lnk.WorkingDirectory = $scriptDir
+    $lnk.IconLocation = "$($info.Exe),0"
+    $lnk.WindowStyle = 7  # minimized: hides the brief console flash
+    $lnk.Description = 'Claude Desktop with LTR window chrome (RTL ghost-pane workaround)'
+    $lnk.Save()
+    Write-Ok "Shortcut created: $lnkPath"
+    Write-Info "Search 'Claude (LTR)' in the Start menu and pin it to the taskbar."
+    Write-Info "Launch Claude through it from now on. Clicking it while Claude is open just focuses the window."
+    Write-Warn "After a Microsoft Store update the ICON may go generic (the shortcut keeps working); re-run -Mode InstallShortcut to refresh it."
 }
 
 # ============================================================================
@@ -375,4 +408,5 @@ switch ($Mode) {
     'CopySnippet'    { Invoke-CopySnippetMode }
     'PrintSnippet'   { Invoke-PrintSnippetMode }
     'LaunchLtr'      { Invoke-LaunchLtrMode }
+    'InstallShortcut' { Invoke-InstallShortcutMode }
 }
