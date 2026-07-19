@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Launcher: `-Mode LaunchLtr` -- ghost preview-pane workaround
+- New launcher mode that starts Claude Desktop with
+  `--lang=en-US --force-ui-direction=ltr`, forcing an unmirrored (LTR)
+  window frame on Hebrew/Arabic Windows display languages.
+- Motivation: on RTL-mirrored Windows, Claude Desktop draws its embedded
+  browser/preview pane twice -- the live webview in one coordinate space
+  and a snapshot layer in the mirrored one -- so a ghost copy of the pane
+  floats over the chat (disappears when the pane has focus, returns on
+  blur). Confirmed to reproduce with NO snippet injected (clean app
+  restart), i.e. an upstream app bug, not an injection side effect.
+- The mode resolves the MSIX executable dynamically from the package
+  manifest (survives Store version bumps), copies the snippet to the
+  clipboard, and refuses to run while Claude is already open --
+  Electron's single-instance lock makes a second launch ignore CLI
+  flags, so the flags would silently do nothing.
+- `Claude-RTL.cmd` now delegates to `-Mode LaunchLtr` instead of
+  activating the app via `shell:AppsFolder` (which cannot pass CLI
+  arguments).
+- Side effect of `--lang=en-US`: window controls return to the right,
+  so the snippet's title-bar padding fallback correctly stays inactive.
+
 ### v17 (snippet) -- live epitaxy class inventory coverage
 - Coverage extended using a class-name inventory dumped from the running
   Claude Desktop app (`[class*="epitaxy-"]` scan):

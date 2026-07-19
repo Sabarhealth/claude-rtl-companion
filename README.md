@@ -180,6 +180,7 @@ then `Ctrl+V` and `Enter` in the DevTools Console.
 | `DisableDevMode` | Backs up `config.json`, removes the `allowDevTools` key. |
 | `CopySnippet` | Puts the injection snippet on your clipboard. |
 | `PrintSnippet` | Prints the snippet to stdout. |
+| `LaunchLtr` | Copies the snippet, then launches Claude with `--lang=en-US --force-ui-direction=ltr` so the window chrome is NOT mirrored on Hebrew/Arabic Windows display languages. Works around the ghost/duplicate preview-pane layer (see Troubleshooting). Refuses to run while Claude is already open (Electron's single-instance lock would ignore the flags). |
 
 All modes are non-interactive (no Y/N prompts). The `-NoConfirm` flag is
 accepted for backwards compatibility but is now a no-op.
@@ -262,7 +263,8 @@ version.
 | `running scripts is disabled on this system` | PowerShell execution policy | Run with `powershell -ExecutionPolicy Bypass -File .\claude-rtl.ps1 -Mode Setup` or change policy (see *PowerShell execution policy* above) |
 | DevTools doesn't auto-open | `CLAUDE_DEV_TOOLS` env var didn't propagate to Explorer | `-Mode Setup` broadcasts `WM_SETTINGCHANGE` to fix this. If still missing: sign out + back in, or open Claude via `Claude-RTL.cmd` which inherits the env var from PowerShell |
 | `Ctrl+Alt+I` does nothing in Claude | Hebrew keyboard layout intercepts `Ctrl+Alt` as `AltGr` | Switch to English layout (`Win+Space`) before pressing, or rely on the auto-open env var instead |
-| Hamburger menu hidden behind window-controls overlay | Windows RTL OS locale flips title-bar buttons | The snippet adds inline-start padding via the WCO API; falls back to 140px if WCO API is unavailable |
+| Hamburger menu hidden behind window-controls overlay | Windows RTL OS locale flips title-bar buttons | The snippet adds inline-start padding via the WCO API; falls back to 140px if WCO API is unavailable. Or launch via `-Mode LaunchLtr`, which unmirrors the window entirely |
+| Browser/preview pane draws a duplicate "ghost" copy floating over the chat; disappears on focus, returns on blur | Claude Desktop bug on RTL-mirrored Windows (Hebrew/Arabic display language): the embedded webview and its snapshot layer are positioned in different coordinate spaces. Reproduces with no snippet injected | Quit Claude fully, relaunch via `Claude-RTL.cmd` or `-Mode LaunchLtr` (forces LTR window chrome). Chat content RTL is unaffected -- the snippet handles that inside the page |
 | Snippet runs but no visual change | An older version is loaded -- clear with `claudeRtlRemove()` then re-paste current snippet |
 | Lists with mixed-language items split visually (marker right, content drifting left) | Older snippet (≤ v10) -- pull latest and re-copy |
 | Chat composer doesn't flip direction when typing Hebrew | Older snippet (≤ v11) without input coverage -- pull latest and re-copy |

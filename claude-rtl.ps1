@@ -45,7 +45,7 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet('Status','Setup','EnableDevMode','DisableDevMode','CopySnippet','PrintSnippet')]
+    [ValidateSet('Status','Setup','EnableDevMode','DisableDevMode','CopySnippet','PrintSnippet','LaunchLtr')]
     [string]$Mode = 'Status',
 
     # Backwards-compat: no-op. Prompts have been removed; the script always
@@ -333,6 +333,37 @@ function Invoke-PrintSnippetMode {
     Get-Snippet | Write-Host
 }
 
+function Invoke-LaunchLtrMode {
+    # On Hebrew/Arabic Windows display languages, Chromium mirrors the whole
+    # window (RTL frame). Claude Desktop then draws its embedded browser/
+    # preview panes twice: the live webview positioned in one coordinate
+    # space and a snapshot layer in the other, so a "ghost" copy floats over
+    # the chat. Forcing the app's UI locale/direction to LTR sidesteps the
+    # mirroring entirely. Chat content RTL is unaffected (the snippet handles
+    # that inside the page).
+    $running = @(Get-RunningClaudeMainProcesses)
+    if ($running.Count -gt 0) {
+        Write-Err "Claude is already running (PID $($running[0].ProcessId))."
+        Write-Err "Electron's single-instance lock makes a second launch ignore CLI flags."
+        Write-Info "Quit Claude fully (tray icon -> Quit), then run this mode again."
+        exit 1
+    }
+
+    $pkg = Get-AppxPackage -Name 'Claude' -ErrorAction SilentlyContinue
+    if (-not $pkg) { throw "Claude Desktop (MSIX) not installed." }
+    $rel = (Get-AppxPackageManifest $pkg).Package.Applications.Application |
+        Select-Object -First 1 -ExpandProperty Executable
+    $exe = Join-Path $pkg.InstallLocation $rel
+    if (-not (Test-Path $exe)) { throw "Claude executable not found at: $exe" }
+
+    Copy-SnippetToClipboard
+    Write-Info "Launching Claude with LTR window chrome:"
+    Write-Host "  `"$exe`" --lang=en-US --force-ui-direction=ltr"
+    Start-Process -FilePath $exe -ArgumentList '--lang=en-US', '--force-ui-direction=ltr'
+    Write-Ok "Launched. Window controls should now be on the RIGHT (unmirrored)."
+    Write-Info "Snippet is on the clipboard: DevTools Console -> Ctrl+V -> Enter."
+}
+
 # ============================================================================
 # Dispatch
 # ============================================================================
@@ -343,4 +374,5 @@ switch ($Mode) {
     'DisableDevMode' { Invoke-DisableDevModeMode }
     'CopySnippet'    { Invoke-CopySnippetMode }
     'PrintSnippet'   { Invoke-PrintSnippetMode }
+    'LaunchLtr'      { Invoke-LaunchLtrMode }
 }
