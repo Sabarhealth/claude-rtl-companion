@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Docs: upgrade guide for pre-launcher installs
+- README gained an "Upgrading from an older install" section: the
+  canonical 3-step path (git pull -> InstallShortcut + pin -> verify the
+  DevTools snippet is named `Claude-RTL`) for machines set up in the
+  CopySnippet-and-paste era. Snippet content needs no manual update --
+  the editor-sync refreshes it from the repo on first inject.
+
 ### Launcher: self-update on every launch/inject
 - `LaunchLtr` and `Inject` now run a silent `git pull --ff-only` on the
   repo before copying the snippet, with `GIT_TERMINAL_PROMPT=0` so a

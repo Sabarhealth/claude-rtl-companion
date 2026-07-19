@@ -117,6 +117,38 @@ nothing else -- unmirrored window, session auto-injected. If a session
 ever renders LTR (e.g. the app opened on the Home screen at launch),
 click into the chat and press `Ctrl+Alt+R`.
 
+## Upgrading from an older install (pre-launcher era)
+
+If you set this up back when the flow was "CopySnippet → paste in the
+Console" (snippet v13-v14), your machine already has dev mode and the
+env var. To move to the current fully-automatic flow:
+
+1. Pull the latest:
+
+   ```powershell
+   git pull
+   ```
+
+2. Install the launchers and pin **"Claude (LTR)"** to the taskbar --
+   launch Claude only through it from now on:
+
+   ```powershell
+   .\claude-rtl.ps1 -Mode InstallShortcut
+   ```
+
+3. In Claude's DevTools (**Sources** → **Snippets**), make sure your
+   saved snippet is named exactly `Claude-RTL` -- right-click →
+   **Rename** if you used a different name. Do NOT bother updating its
+   content: the automation re-syncs it from this repo before every run.
+
+That's the whole upgrade. You get: an unmirrored window (no ghost
+preview-pane on Hebrew/Arabic Windows), automatic injection on every
+launch, `Ctrl+Alt+R` for on-demand injection, and silent self-updates
+(the launcher git-pulls this repo on every launch/inject).
+
+If anything misbehaves: re-run `.\claude-rtl.ps1 -Mode Setup`
+(idempotent) and check `%TEMP%\claude-rtl-launch.log`.
+
 ### If you'd rather do the steps individually
 
 ```powershell
