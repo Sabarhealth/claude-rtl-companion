@@ -15,6 +15,7 @@
   .prose ol > li { counter-increment: item; }
   .prose ol > li::before { content: counter(item) "."; position: absolute; left: 0; color: #999; }
   .prose ul > li::before { content: ""; position: absolute; left: 0; top: 0.6em; width: 0.35em; height: 0.35em; border-radius: 50%; background: #999; }
+  .prose blockquote { border-left: 0.25rem solid #888; padding-left: 1em; }
   .text-left { text-align: left; }
   table { border-collapse: collapse; }
   td, th { border: 1px solid #444; padding: 4px 10px; }
@@ -153,6 +154,9 @@ window.runRtlAssertions = async function () {
     dir($('c18')) + ' attr=' + $('c18').getAttribute('dir'));
   t('c19 h2 shipped ltr -> rtl', dir($('c19')) === 'rtl', dir($('c19')));
   t('c20 blockquote -> rtl', dir($('c20')) === 'rtl', dir($('c20')));
+  t('c20 blockquote border flipped right', parseFloat(getComputedStyle($('c20')).borderRightWidth) > 0 &&
+    parseFloat(getComputedStyle($('c20')).borderLeftWidth) === 0,
+    getComputedStyle($('c20')).borderLeftWidth + '/' + getComputedStyle($('c20')).borderRightWidth);
   t('c21 user-turn bubble -> rtl', dir($('c21')) === 'rtl', dir($('c21')));
   t('c22 epitaxy-codeblock forced ltr', dir($('c22')) === 'ltr' &&
     !$('c22').hasAttribute('dir') &&

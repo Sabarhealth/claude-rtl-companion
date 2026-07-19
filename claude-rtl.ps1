@@ -428,6 +428,9 @@ function Invoke-InjectMode {
         exit 1
     }
 
+    # The clipboard feeds the editor-sync step in Invoke-AutoInject (the
+    # saved DevTools snippet is refreshed from the repo on every inject).
+    Copy-SnippetToClipboard
     Invoke-AutoInject -Immediate
 
     # Restore the user's keyboard layout on the MAIN window -- the en-US
@@ -603,8 +606,20 @@ public struct RECT { public int Left; public int Top; public int Right; public i
     Start-Sleep -Milliseconds 800
     # ...because on current DevTools (148) "!name"+Enter only OPENS the
     # snippet -- it does not run it (verified live with screenshots).
-    # Ctrl+Enter runs the snippet open in the editor. If Enter DID run it
-    # already, running twice is harmless: the snippet is idempotent.
+    # While the editor is focused, SYNC the saved snippet from the repo:
+    # the clipboard holds the latest inject-snippet.js (Copy-SnippetToClipboard
+    # ran at the start of both LaunchLtr and Inject), so select-all + paste +
+    # save keeps the DevTools copy current -- git pull + inject = updated,
+    # no manual re-pasting ever. A corrupted clipboard would momentarily
+    # break the saved copy, but the next inject re-syncs it from the repo.
+    $shell.SendKeys('^a')
+    Start-Sleep -Milliseconds 250
+    $shell.SendKeys('^v')
+    Start-Sleep -Milliseconds 500
+    $shell.SendKeys('^s')
+    Start-Sleep -Milliseconds 500
+    # Ctrl+Enter runs the snippet open in the editor. Idempotent -- a
+    # double-run is harmless.
     $shell.SendKeys('^{ENTER}')
     Start-Sleep -Milliseconds 900
     # Close the DevTools window we opened -- the injected style/observers

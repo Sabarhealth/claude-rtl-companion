@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### v18 (snippet) -- RTL blockquote border flip; launcher auto-syncs snippet
+- Live verification of v17 in the real app surfaced one cosmetic gap:
+  Tailwind prose draws the blockquote bar with a physical `border-left`,
+  so RTL quotes kept the bar on the wrong side. v18 flips bar + padding
+  to the right for `blockquote:dir(rtl)`, matching prose's color via
+  `--tw-prose-quote-borders` when defined. Harness: 32 assertions.
+- The auto-inject now SYNCS the saved DevTools snippet from the repo on
+  every run: after Quick Open opens the snippet in the editor, it does
+  select-all + paste (clipboard holds the current inject-snippet.js) +
+  save, then Ctrl+Enter. `git pull` + inject = latest snippet -- no
+  manual re-pasting after updates. `-Mode Inject` now also copies the
+  snippet to the clipboard for this purpose.
+
 ### Launcher: fully automatic launch flow (shared session view)
 - User-verified: Claude REUSES one session WebContentsView across all
   sessions (switching chats keeps the injected RTL fixes). One

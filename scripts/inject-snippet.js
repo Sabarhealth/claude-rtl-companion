@@ -1,6 +1,11 @@
 ﻿// =============================================================================
-// Claude RTL Companion -- DevTools console snippet (v17)
+// Claude RTL Companion -- DevTools console snippet (v18)
 // =============================================================================
+// v18: blockquote's decorative border (Tailwind prose draws it with a
+// physical border-left) now flips to the right edge in RTL context, with the
+// matching padding mirror. Uses --tw-prose-quote-borders when defined so the
+// color matches prose exactly. Safe under logical-property prose builds too.
+//
 // v17 extends coverage using a live inventory of Claude Desktop's epitaxy
 // class names (dumped from the real app):
 //   - .epitaxy-user-turn: the user's own message bubble -- plain-div text,
@@ -79,6 +84,18 @@ ul:dir(rtl), ol:dir(rtl) {
 ul:dir(rtl) > li, ol:dir(rtl) > li {
   padding-left: 0 !important;
   padding-right: 0.375em !important;
+}
+
+/* Blockquote: prose draws the decorative bar with a physical border-left;
+   flip bar + padding to the right edge for RTL quotes. Color matches prose
+   via --tw-prose-quote-borders when defined. */
+blockquote:dir(rtl) {
+  border-left-width: 0 !important;
+  border-right-width: 0.25rem !important;
+  border-right-style: solid !important;
+  border-right-color: var(--tw-prose-quote-borders, rgba(128, 128, 128, 0.35)) !important;
+  padding-left: 0 !important;
+  padding-right: 1em !important;
 }
 
 /* Code blocks always LTR. .epitaxy-codeblock / .epitaxy-diff are Claude
@@ -393,5 +410,5 @@ pre *, code *, .code-block__code *, [class*="code-block"] *, [class*="CodeBlock"
     return 'removed';
   };
 
-  return 'Claude RTL v17 applied (' + initialTagged + ' elements tagged; covers user-turn bubbles, epitaxy codeblock/diff/prompt-input). Run claudeRtlRemove() to undo.';
+  return 'Claude RTL v18 applied (' + initialTagged + ' elements tagged; adds RTL blockquote border flip). Run claudeRtlRemove() to undo.';
 })();
