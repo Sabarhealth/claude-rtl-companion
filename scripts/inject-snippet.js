@@ -1,98 +1,36 @@
 ﻿// =============================================================================
-// Claude RTL Companion -- DevTools console snippet (v15)
+// Claude RTL Companion -- DevTools console snippet (v16)
 // =============================================================================
-// v15 fixes numbered/bulleted lists staying LTR when Claude Desktop ships them
-// with dir="ltr" already on the <ol>/<ul>. v14 used `ul:not([dir]), ol:not([dir])`
-// which skipped any list with a pre-existing dir attribute. That was a first-
-// strong auto-detect on Claude's side that mis-fires for lists starting with
-// an English acronym (e.g. "1. SHIMI (האחרונה): ...") -- items contain Hebrew
-// but the top of the list looks English, so Claude marks the list LTR and the
-// markers stay glued to the left.
+// v16 generalizes v15's lesson to EVERY tagging pass. A simulation harness
+// (test/simulation.html) proved v15 still had six holes, all one bug class:
+// the `:not([dir])` selectors treated "has a dir attribute" as "already
+// processed", so any element Claude Desktop shipped with dir="ltr" -- and any
+// element WE tagged early during streaming -- was never re-evaluated.
 //
-// v15 selects `ul, ol` unconditionally and skips only lists that are already
-// dir="rtl". If any Hebrew/Arabic character appears in the list's textContent,
-// we set dir="rtl" -- overriding Claude's ltr. Everything else (per-cell
-// direction, epitaxy cards, inputs) is unchanged from v14.
-// =============================================================================
+// Failures found by the harness against v15:
+//   - <p dir="ltr">, <h2 dir="ltr">, <table dir="ltr">, epitaxy card with
+//     shipped dir: all skipped, stayed LTR despite Hebrew content.
+//   - <li dir="ltr"> inside a Hebrew list: kept its explicit ltr, breaking
+//     marker-side inheritance (the v9 lesson).
+//   - Streaming: a paragraph tagged dir="auto" while still English-only was
+//     never re-checked when Hebrew streamed in later -- it stayed LTR.
 //
-// v14 extends coverage to Claude Desktop's custom UI components (the
-// "epitaxy" design system), in particular the AskUserQuestion picker
-// (.epitaxy-approval-card) and the branch row (.epitaxy-branch-row).
-// These cards are built from <button>/<div> with custom class names, not
-// from semantic <p>/<li>/<td>, so v13's tag set missed them.
+// v16 strategy -- stateless re-evaluation:
+//   - Selectors match ALL target elements (no :not([dir]) state-marker).
+//   - Every pass computes the desired dir from current content and writes
+//     only when the value actually differs (cheap, React-churn-friendly,
+//     and streaming-safe: content changes flip the dir on the next tick).
+//   - Shipped dir="ltr" on pure-English block elements is left alone (it
+//     resolves the same as "auto"; rewriting would just fight React).
+//   - li/p descendants of our RTL lists get any shipped dir stripped so
+//     they inherit the list direction (marker side follows the li).
+// ponytail: full re-scan each pass; if very long chats ever lag, fast-path
+// elements whose textContent length is unchanged.
 //
-// v14:
-//   - Adds <button> to AUTO_TAGS so any button containing Hebrew gets
-//     dir="rtl" (flips its flex layout: text/icon order follows reading
-//     direction, RTL convention). Pure-English buttons get dir="auto"
-//     which resolves to LTR, so they are unchanged.
-//   - Tags .epitaxy-approval-card and .epitaxy-branch-row with dir="rtl"
-//     if their text content has Hebrew. Descendants inherit the card's
-//     RTL direction; nested flex containers reorder naturally.
-//   - Adds <button> to the CSS text-align:start rule so button label
-//     text follows the resolved direction (right for Hebrew, left for
-//     English).
-// =============================================================================
-//
-// v13 changed two tagging behaviors per user request:
-//
-// 1. Mixed-language paragraphs now force RTL even when the line starts with
-//    English. Previously a paragraph like "<strong>Note</strong> שים לב"
-//    auto-detected to LTR because the first strong char was English. v13
-//    sets dir="rtl" whenever any Hebrew/Arabic character appears anywhere
-//    in the element's text content. Pure-English content stays dir="auto"
-//    (which resolves to LTR), so English-only lines are unchanged.
-//
-// 2. All tables (outside code blocks) get dir="rtl" so the column order
-//    flips to RTL. Per-cell text alignment is independent: <td>/<th> still
-//    get dir="rtl"/auto based on their own content, so a pure-English cell
-//    stays left-aligned within the RTL-ordered table.
-//
-// The previous CSS rule that forced `table { direction: ltr !important }`
-// is removed; the new HTML dir attribute on each table is now the source
-// of truth for column direction.
-// =============================================================================
-//
-// v12 extended v11 to cover the chat input area. Claude Desktop's composer is
-// a rich-text editor (likely Lexical or ProseMirror in practice) and the
-// generic textarea/contenteditable selectors didn't reliably catch it across
-// builds. v12:
-//   - Broadens the CSS input selectors (Lexical, ProseMirror, Tiptap,
-//     [aria-label*="Message"], [data-slate-editor], etc.).
-//   - Tags those input elements with `dir="auto"` via JS so the input flips
-//     direction once the first strong character is typed: Hebrew ->RTL,
-//     English -> LTR. text-align: start follows the resolved direction.
-//   - Drops `unicode-bidi: plaintext` from input CSS for the same reason
-//     v11 dropped it from <p>/<li>: when the editor is inside an explicit
-//     RTL ancestor, plaintext would override the inherited direction.
-// =============================================================================
-// v11 fixes the issue v10 introduced where list items containing English-first
-// mixed-language content rendered the marker on the right side of the list
-// (correct) but the content drifted to the left as a separate-looking
-// paragraph (broken).
-//
-// Root cause: v10 had `unicode-bidi: plaintext !important` on every <p>, <li>,
-// <td>, etc. When a <p> was inside a <ul dir="rtl">, the <p>:
-//   - inherited element direction RTL
-//   - but `plaintext` overrode the paragraph base direction to "first-strong
-//     of own content"
-//   - first-strong of "picker UI של שאלה ..." is "p" (English) -> paragraph
-//     direction LTR
-//   - element direction RTL (right alignment) and paragraph direction LTR
-//     (text flows L->R) gave a broken-looking visual split.
-//
-// v11 strategy:
-//   1. JS tags <ul>/<ol> with dir="rtl" if their text has Hebrew/Arabic.
-//   2. JS tags <p>, <td>, <th>, <h1-h6>, etc with dir="auto" -- BUT only
-//      when they are NOT inside a [dir="rtl"] ancestor. Items inside a
-//      Hebrew list inherit RTL direction from the list, and the bidi
-//      algorithm handles mixed Hebrew+English chunks within the line
-//      naturally (LTR runs nested inside an RTL paragraph).
-//   3. CSS no longer sets `unicode-bidi: plaintext`. It only sets
-//      `text-align: start` (which follows the element's resolved
-//      direction) and the list-marker overrides for RTL contexts.
-//   4. Real-time MutationObserver (200ms debounce) and a 5s setInterval
-//      backup carry over from v10.
+// Full per-version history (v3..v16, incl. the v9 marker-inheritance and v11
+// plaintext lessons) lives in CHANGELOG.md and git log -- not here, to keep
+// the DevTools paste payload small.
+// Verify changes against test/simulation.html (27 assertions) before bumping.
 // =============================================================================
 
 (function () {
@@ -182,106 +120,102 @@ pre *, code *, .code-block__code *, [class*="code-block"] *, [class*="CodeBlock"
   const AUTO_TAGS = ['P', 'TD', 'TH', 'DT', 'DD', 'BLOCKQUOTE',
                      'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
                      'SUMMARY', 'FIGCAPTION', 'CAPTION', 'BUTTON'];
-  const AUTO_SELECTOR = AUTO_TAGS.map(t => t.toLowerCase() + ':not([dir])').join(',');
+  // v16: no :not([dir]) state-marker -- every pass re-evaluates all targets
+  // from current content and writes only on change (see setDir).
+  const AUTO_SELECTOR = AUTO_TAGS.map(t => t.toLowerCase()).join(',');
   const RTL_RX = /[֐-׿؀-ۿ܀-ݏހ-޿]/;
+  const IN_CODE = 'pre, code, [class*="code-block"], [class*="CodeBlock"]';
 
   // Claude Desktop's custom UI containers (the "epitaxy" design system).
   // These cards/rows use <button>/<div>/<span> with custom classes rather
   // than semantic tags, so AUTO_SELECTOR alone misses them. We tag the
   // outer card with dir="rtl" when it contains Hebrew; flex/grid layouts
   // inside the card reorder naturally based on inherited direction.
-  const CLAUDE_CARD_SELECTOR = [
-    '.epitaxy-approval-card:not([dir])',
-    '.epitaxy-branch-row:not([dir])'
-  ].join(',');
+  const CLAUDE_CARD_SELECTOR = '.epitaxy-approval-card, .epitaxy-branch-row';
 
   // Editable surface selector: covers textarea, generic contenteditable,
   // and rich-text editor frameworks (Lexical, ProseMirror, Tiptap, Quill,
   // Slate). aria-label heuristics catch composers that don't expose a
   // specific framework class.
   const INPUT_SELECTOR = [
-    'textarea:not([dir])',
-    'input[type="text"]:not([dir])',
-    'input[type="search"]:not([dir])',
-    'input[type="email"]:not([dir])',
-    'input[type="url"]:not([dir])',
-    'input:not([type]):not([dir])',
-    '[contenteditable="true"]:not([dir])',
-    '[contenteditable=""]:not([dir])',
-    '[role="textbox"]:not([dir])',
-    '.ProseMirror:not([dir])',
-    '.tiptap:not([dir])',
-    '.ql-editor:not([dir])',
-    '[data-lexical-editor]:not([dir])',
-    '[data-slate-editor="true"]:not([dir])'
+    'textarea',
+    'input[type="text"]',
+    'input[type="search"]',
+    'input[type="email"]',
+    'input[type="url"]',
+    'input:not([type])',
+    '[contenteditable="true"]',
+    '[contenteditable=""]',
+    '[role="textbox"]',
+    '.ProseMirror',
+    '.tiptap',
+    '.ql-editor',
+    '[data-lexical-editor]',
+    '[data-slate-editor="true"]'
   ].join(',');
+
+  // Write dir only when it actually changes. Keeps passes idempotent and
+  // cheap, avoids fighting React re-renders, and lets streamed content flip
+  // an element's direction on a later tick.
+  function setDir(el, want) {
+    if (el.getAttribute('dir') === want) return 0;
+    el.setAttribute('dir', want);
+    return 1;
+  }
 
   function tagAuto() {
     let n = 0;
     try {
-      // 1. Lists with Hebrew/Arabic content -> dir="rtl" (markers go right).
-      //    We deliberately match ol/ul even if they already have a dir. Claude
-      //    Desktop ships some lists with dir="ltr" (looks like a first-strong
-      //    based auto-detect on the source markdown). For a list whose items
-      //    START with an English acronym but contain Hebrew, that's wrong --
-      //    the whole list should be RTL so markers and padding flip. Skip
-      //    only the ones already set to rtl.
-      const lists = document.querySelectorAll('ul, ol');
-      for (const list of lists) {
-        if (list.closest('pre, code, [class*="code-block"], [class*="CodeBlock"]')) continue;
-        if (list.getAttribute('dir') === 'rtl') continue;
-        if (RTL_RX.test(list.textContent || '')) {
-          list.setAttribute('dir', 'rtl');
-          n++;
-        }
+      // 1. Lists: Hebrew/Arabic anywhere -> dir="rtl", overriding any
+      //    Claude-shipped dir (Claude first-strong-detects per element and
+      //    mis-labels English-first mixed lists as ltr).
+      for (const list of document.querySelectorAll('ul, ol')) {
+        if (list.closest(IN_CODE)) continue;
+        if (RTL_RX.test(list.textContent || '')) n += setDir(list, 'rtl');
       }
-      // 2. Tables: ALL get dir="rtl" so column order flows right-to-left.
-      //    Per-cell direction is set independently below so pure-English
-      //    cells still align left.
-      const tables = document.querySelectorAll('table:not([dir])');
-      for (const table of tables) {
-        if (table.closest('pre, code, [class*="code-block"], [class*="CodeBlock"]')) continue;
-        table.setAttribute('dir', 'rtl');
+      // 1b. li/p descendants of our RTL lists must INHERIT the list
+      //     direction (v9 lesson: the li's own direction decides the marker
+      //     side). Strip any dir Claude shipped on them.
+      for (const el of document.querySelectorAll(':is(ul, ol)[dir="rtl"] :is(li, p)[dir]')) {
+        el.removeAttribute('dir');
         n++;
       }
+      // 2. Tables: ALL get dir="rtl" so column order flows right-to-left
+      //    (v13 decision), shipped dir included. Per-cell direction is set
+      //    independently below so pure-English cells still align left.
+      for (const table of document.querySelectorAll('table')) {
+        if (table.closest(IN_CODE)) continue;
+        n += setDir(table, 'rtl');
+      }
       // 2b. Claude Desktop UI cards (AskUserQuestion picker, branch row).
-      //     These are <div>-based custom components; tag the outer card so
-      //     descendants inherit RTL and nested flex containers flip order.
-      const cards = document.querySelectorAll(CLAUDE_CARD_SELECTOR);
-      for (const card of cards) {
-        if (card.closest('pre, code, [class*="code-block"], [class*="CodeBlock"]')) continue;
-        if (RTL_RX.test(card.textContent || '')) {
-          card.setAttribute('dir', 'rtl');
-          n++;
-        }
+      for (const card of document.querySelectorAll(CLAUDE_CARD_SELECTOR)) {
+        if (card.closest(IN_CODE)) continue;
+        if (RTL_RX.test(card.textContent || '')) n += setDir(card, 'rtl');
       }
       // 3. Block text containers:
-      //    - Skip elements inside RTL <ul>/<ol> (they should inherit list direction)
-      //    - For everything else: rtl if any Hebrew/Arabic anywhere in the
-      //      text (mixed lines included), auto otherwise (resolves to LTR
-      //      for pure English).
+      //    - Skip elements inside RTL <ul>/<ol> (they inherit list direction)
+      //    - rtl if any Hebrew/Arabic anywhere in the text, auto otherwise.
+      //    - A shipped dir="ltr" on non-RTL content is left alone: it
+      //      resolves the same as "auto" and rewriting would churn the DOM.
       //    NOTE: we do NOT skip descendants of RTL tables, because we want
       //    per-cell direction so English cells in an RTL-ordered table
       //    stay left-aligned within the cell.
-      const els = document.querySelectorAll(AUTO_SELECTOR);
-      for (const el of els) {
-        if (el.closest('pre, code, [class*="code-block"], [class*="CodeBlock"]')) continue;
+      for (const el of document.querySelectorAll(AUTO_SELECTOR)) {
+        if (el.closest(IN_CODE)) continue;
         if (el.closest('ul[dir="rtl"], ol[dir="rtl"]')) continue;
-        const text = el.textContent || '';
-        if (RTL_RX.test(text)) {
-          el.setAttribute('dir', 'rtl');
+        if (RTL_RX.test(el.textContent || '')) {
+          n += setDir(el, 'rtl');
         } else {
-          el.setAttribute('dir', 'auto');
+          const cur = el.getAttribute('dir');
+          if (cur !== 'auto' && cur !== 'ltr') n += setDir(el, 'auto');
         }
-        n++;
       }
       // 4. Editable inputs: dir="auto" so direction flips per first typed
-      //    character. Empty inputs resolve to LTR by default.
-      const inputs = document.querySelectorAll(INPUT_SELECTOR);
-      for (const inp of inputs) {
-        if (inp.closest('pre, code, [class*="code-block"], [class*="CodeBlock"]')) continue;
-        inp.setAttribute('dir', 'auto');
-        n++;
+      //    character. Overrides shipped values -- auto adapts, a fixed dir
+      //    doesn't. Empty inputs resolve to LTR by default.
+      for (const inp of document.querySelectorAll(INPUT_SELECTOR)) {
+        if (inp.closest(IN_CODE)) continue;
+        n += setDir(inp, 'auto');
       }
     } catch (_) {}
     return n;
@@ -455,5 +389,5 @@ pre *, code *, .code-block__code *, [class*="code-block"] *, [class*="CodeBlock"
     return 'removed';
   };
 
-  return 'Claude RTL v15 applied (' + initialTagged + ' elements tagged; overrides Claude-shipped dir="ltr" on Hebrew lists). Run claudeRtlRemove() to undo.';
+  return 'Claude RTL v16 applied (' + initialTagged + ' elements tagged; stateless re-evaluation, streaming-safe). Run claudeRtlRemove() to undo.';
 })();

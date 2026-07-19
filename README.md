@@ -228,11 +228,31 @@ claude-rtl-companion/
 │   └── rtl.css                  the CSS that gets injected
 ├── scripts/
 │   └── inject-snippet.js        the snippet that goes into DevTools
+├── test/
+│   └── simulation.html          27-assertion harness mimicking Claude's DOM
 ├── docs/
 │   └── SECURITY.md              threat-model write-up
 ├── CHANGELOG.md
 └── README.md
 ```
+
+## Testing
+
+`test/simulation.html` replicates Claude Desktop's rendering quirks
+(Tailwind-prose absolute list markers, Claude-shipped `dir="ltr"`
+attributes, epitaxy cards, streaming mutations, code blocks) and runs
+27 assertions against the real `scripts/inject-snippet.js`. Serve the
+repo root over HTTP and open the page -- results render in-page and in
+`window.__rtlResults`:
+
+```
+python -m http.server 8123
+# then open http://localhost:8123/test/simulation.html
+```
+
+Don't open it via `file://` -- browsers/panes may snapshot the script
+and you'll test a stale version. Run this before bumping any snippet
+version.
 
 ## Troubleshooting
 

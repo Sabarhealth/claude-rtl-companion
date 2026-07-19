@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### v16 (snippet) -- stateless re-evaluation; simulation test harness
+- Added `test/simulation.html`: a 27-assertion harness that mimics Claude
+  Desktop's rendering (Tailwind-prose absolute `::before` list markers,
+  Claude-shipped `dir="ltr"` attributes, epitaxy cards, a composer,
+  streaming mutations, code blocks). Serve the repo root over HTTP
+  (`python -m http.server 8123`, or the bundled `.claude/launch.json`
+  config) and open `/test/simulation.html` -- results render in-page and
+  in `window.__rtlResults`. Run it before bumping any snippet version.
+- The harness proved v15 still had six holes, all one bug class: the
+  `:not([dir])` selectors treated "has a dir attribute" as "already
+  processed", so elements Claude shipped with `dir="ltr"` (`<p>`, `<h2>`,
+  `<table>`, epitaxy cards, individual `<li>`) were never re-evaluated --
+  and neither were elements the snippet itself tagged early during
+  streaming: a paragraph tagged `dir="auto"` while still English-only
+  stayed LTR even after Hebrew streamed in.
+- v16 switches every tagging pass to stateless re-evaluation: selectors
+  match all target elements, each pass computes the desired dir from
+  current content, and writes only when the value actually differs
+  (verified zero attribute churn across idle re-tag passes). Streamed
+  content now flips direction on the next observer tick.
+- `<li>`/`<p>` descendants of RTL lists get any Claude-shipped `dir`
+  stripped so they inherit the list direction (the v9 marker-side lesson).
+- Shipped `dir="ltr"` on pure-English block elements is left alone (it
+  resolves the same as `auto`; rewriting would fight React re-renders).
+- Trimmed the v11-v15 history comments from the snippet header -- the
+  paste payload shrinks by ~90 lines; history lives here and in git log.
+
 ### v15 (snippet) -- override Claude-shipped `dir="ltr"` on Hebrew lists
 - Numbered/bulleted lists whose first item starts with an English acronym
   (e.g. `1. SHIMI (האחרונה): ...`) were staying LTR: markers on the left,

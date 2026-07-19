@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<title>Claude RTL Companion — simulation harness</title>
+<style>
+  /* Mimic Claude Desktop: dark app, Tailwind-prose-like list markers drawn as
+     ::before with position:absolute + physical left offset (the exact hazard
+     the snippet's CSS has to flip), and a hard .text-left utility. */
+  body { background: #1a1915; color: #e8e6e0; font: 14px/1.6 system-ui; margin: 0; padding: 24px; }
+  .prose { max-width: 48em; }
+  .prose ol, .prose ul { padding-left: 1.625em; list-style: none; margin: 0.75em 0; }
+  .prose li { position: relative; padding-left: 0.375em; margin: 0.35em 0; }
+  .prose ol { counter-reset: item; }
+  .prose ol > li { counter-increment: item; }
+  .prose ol > li::before { content: counter(item) "."; position: absolute; left: 0; color: #999; }
+  .prose ul > li::before { content: ""; position: absolute; left: 0; top: 0.6em; width: 0.35em; height: 0.35em; border-radius: 50%; background: #999; }
+  .text-left { text-align: left; }
+  table { border-collapse: collapse; }
+  td, th { border: 1px solid #444; padding: 4px 10px; }
+  pre { background: #111; padding: 8px; overflow-x: auto; }
+  .epitaxy-approval-card { border: 1px solid #555; padding: 10px; margin: 0.75em 0; }
+  [contenteditable] { border: 1px solid #666; min-height: 1.5em; padding: 4px; }
+  #results { background: #0b2818; color: #9fe8b8; padding: 10px; white-space: pre-wrap; }
+  #results.failed { background: #33120f; color: #f3a49a; }
+</style>
+</head>
+<body>
+<div class="prose" id="chat">
+
+  <!-- c1: THE v15 bug — Claude ships dir="ltr" on an ol whose items contain Hebrew -->
+  <ol dir="ltr" id="c1"><li id="c1li"><strong>SHIMI</strong> (האחרונה): צור PAT עם read:packages</li><li>Schedj — החבילה עברה לקבועי JS</li></ol>
+
+  <!-- c2: clean Hebrew list, no shipped dir -->
+  <ul id="c2"><li>שלום עולם</li><li>עוד פריט</li></ul>
+
+  <!-- c3: pure-English list must stay LTR -->
+  <ul id="c3"><li>plain english item</li><li>another one</li></ul>
+
+  <!-- c4: English-only nested list inside a Hebrew list inherits RTL (documented) -->
+  <ol id="c4"><li>עברית ראשית<ul id="c4n"><li>english nested item</li></ul></li></ol>
+
+  <!-- c5: Claude ships dir="ltr" on an individual li inside a Hebrew list -->
+  <ul id="c5"><li>פריט רגיל</li><li dir="ltr" id="c5li">פריט עם dir שגוי</li></ul>
+
+  <!-- c6: Claude ships dir="ltr" on an English-first mixed paragraph -->
+  <p dir="ltr" id="c6"><strong>Note</strong> שים לב לזה</p>
+
+  <!-- c7: clean mixed paragraph -->
+  <p id="c7">Deploy הושלם בהצלחה</p>
+
+  <!-- c8: pure-English paragraph with shipped ltr — leave untouched (no churn) -->
+  <p id="c8" dir="ltr">Pure English paragraph.</p>
+
+  <!-- c9: hard-coded text-left utility on Hebrew text -->
+  <p id="c9" class="text-left">טקסט עברי עם text-left קשיח</p>
+
+  <!-- c10: Claude ships dir="ltr" on a table with Hebrew content -->
+  <table dir="ltr" id="c10"><thead><tr><th id="c10th">אפליקציה</th><th>Status</th></tr></thead><tbody><tr><td id="c10td">HRIS</td><td>הושלם</td></tr></tbody></table>
+
+  <!-- c11: code block with a Hebrew comment stays LTR -->
+  <pre id="c11"><code># הערה בעברית
+npm run build</code></pre>
+
+  <!-- c12: inline code inside a Hebrew paragraph -->
+  <p id="c12">להריץ <code id="c12code">npm run dev</code> בטרמינל</p>
+
+  <!-- c13: epitaxy card with shipped dir="ltr" -->
+  <div class="epitaxy-approval-card" dir="ltr" id="c13"><div><button id="c13btn">אשר</button><button>בטל</button></div><p>לאשר את הפעולה?</p></div>
+
+  <!-- c14/c15: Hebrew button flips, English button doesn't -->
+  <button id="c14"><svg width="10" height="10"></svg>שלח הודעה</button>
+  <button id="c15">Send message</button>
+
+  <!-- c16: composer -->
+  <div id="c16" contenteditable="true" role="textbox" aria-label="Message Claude"></div>
+
+  <!-- c17: task-list checkbox must not get a dir attribute -->
+  <ul id="c17u"><li><input type="checkbox" id="c17cb"> משימה ראשונה</li></ul>
+
+  <!-- c18: streaming — starts English, Hebrew appended AFTER the snippet ran -->
+  <p id="c18">The build finished.</p>
+
+  <!-- c19/c20: heading with shipped ltr, blockquote -->
+  <h2 id="c19" dir="ltr">סיכום התהליך</h2>
+  <blockquote id="c20"><p>ציטוט בעברית</p></blockquote>
+
+</div>
+
+<pre id="results">running…</pre>
+
+<script src="../scripts/inject-snippet.js"></script>
+<script>
+window.runRtlAssertions = async function () {
+  // Streaming simulation: mutate AFTER the snippet's initial pass, then wait
+  // longer than the MutationObserver debounce (200ms).
+  document.getElementById('c18').append(' ההרצה הצליחה');
+  await new Promise(r => setTimeout(r, 700));
+
+  const $ = id => document.getElementById(id);
+  const dir = el => getComputedStyle(el).direction;
+  const cases = [];
+  const t = (name, cond, detail) => cases.push({ name, pass: !!cond, detail: String(detail || '') });
+
+  t('c1 ol shipped ltr -> rtl', dir($('c1')) === 'rtl', dir($('c1')));
+  t('c1 marker flipped to right', getComputedStyle($('c1li'), '::before').right === '0px',
+    getComputedStyle($('c1li'), '::before').right);
+  t('c2 clean Hebrew ul -> rtl', dir($('c2')) === 'rtl', dir($('c2')));
+  t('c2 padding mirrored', getComputedStyle($('c2')).paddingLeft === '0px' &&
+    parseFloat(getComputedStyle($('c2')).paddingRight) > 15,
+    getComputedStyle($('c2')).paddingLeft + '/' + getComputedStyle($('c2')).paddingRight);
+  t('c3 English ul stays ltr', dir($('c3')) === 'ltr', dir($('c3')));
+  t('c4n English nested ul inherits rtl', dir($('c4n')) === 'rtl' && !$('c4n').hasAttribute('dir'),
+    dir($('c4n')) + ' attr=' + $('c4n').getAttribute('dir'));
+  t('c5li shipped-ltr li inherits rtl', dir($('c5li')) === 'rtl' && !$('c5li').hasAttribute('dir'),
+    dir($('c5li')) + ' attr=' + $('c5li').getAttribute('dir'));
+  t('c6 p shipped ltr mixed -> rtl', dir($('c6')) === 'rtl', dir($('c6')));
+  t('c7 clean mixed p -> rtl', dir($('c7')) === 'rtl', dir($('c7')));
+  t('c8 pure-English p keeps ltr attr', $('c8').getAttribute('dir') === 'ltr' && dir($('c8')) === 'ltr',
+    $('c8').getAttribute('dir'));
+  t('c9 text-left beaten by start', dir($('c9')) === 'rtl' &&
+    ['start', 'right'].includes(getComputedStyle($('c9')).textAlign),
+    dir($('c9')) + '/' + getComputedStyle($('c9')).textAlign);
+  t('c10 table shipped ltr -> rtl', dir($('c10')) === 'rtl', dir($('c10')));
+  t('c10th Hebrew th -> rtl', dir($('c10th')) === 'rtl', dir($('c10th')));
+  t('c10td English td stays ltr', dir($('c10td')) === 'ltr', dir($('c10td')));
+  t('c11 code block stays ltr', dir($('c11')) === 'ltr' &&
+    getComputedStyle($('c11')).textAlign === 'left',
+    dir($('c11')) + '/' + getComputedStyle($('c11')).textAlign);
+  t('c12 Hebrew p with inline code -> rtl', dir($('c12')) === 'rtl', dir($('c12')));
+  t('c12code inline code isolated ltr', dir($('c12code')) === 'ltr', dir($('c12code')));
+  t('c13 epitaxy card shipped ltr -> rtl', dir($('c13')) === 'rtl', dir($('c13')));
+  t('c13btn Hebrew button -> rtl', dir($('c13btn')) === 'rtl', dir($('c13btn')));
+  t('c14 Hebrew button -> rtl', dir($('c14')) === 'rtl', dir($('c14')));
+  t('c15 English button stays ltr', dir($('c15')) === 'ltr', dir($('c15')));
+  t('c16 composer dir=auto', $('c16').getAttribute('dir') === 'auto', $('c16').getAttribute('dir'));
+  t('c17cb checkbox untouched', !$('c17cb').hasAttribute('dir'), $('c17cb').getAttribute('dir'));
+  t('c17u task list -> rtl', dir($('c17u')) === 'rtl', dir($('c17u')));
+  t('c18 streamed Hebrew flips p -> rtl', dir($('c18')) === 'rtl',
+    dir($('c18')) + ' attr=' + $('c18').getAttribute('dir'));
+  t('c19 h2 shipped ltr -> rtl', dir($('c19')) === 'rtl', dir($('c19')));
+  t('c20 blockquote -> rtl', dir($('c20')) === 'rtl', dir($('c20')));
+
+  const fails = cases.filter(c => !c.pass);
+  const summary = { total: cases.length, failed: fails.length, fails };
+  const out = document.getElementById('results');
+  out.className = fails.length ? 'failed' : '';
+  out.textContent = 'FAILED ' + fails.length + '/' + cases.length + '\n' +
+    cases.map(c => (c.pass ? 'PASS ' : 'FAIL ') + c.name + (c.pass ? '' : '  [' + c.detail + ']')).join('\n');
+  window.__rtlResults = summary;
+  return summary;
+};
+setTimeout(() => window.runRtlAssertions(), 300);
+</script>
+</body>
+</html>
