@@ -224,12 +224,11 @@ right-click → Remove) to fully clean up.
 claude-rtl-companion/
 ├── claude-rtl.ps1               main launcher (PowerShell)
 ├── Claude-RTL.cmd               one-click per-session helper
-├── styles/
-│   └── rtl.css                  the CSS that gets injected
 ├── scripts/
 │   └── inject-snippet.js        the snippet that goes into DevTools
+│                                (embeds its own CSS)
 ├── test/
-│   └── simulation.html          27-assertion harness mimicking Claude's DOM
+│   └── simulation.html          31-assertion harness mimicking Claude's DOM
 ├── docs/
 │   └── SECURITY.md              threat-model write-up
 ├── CHANGELOG.md
@@ -240,8 +239,8 @@ claude-rtl-companion/
 
 `test/simulation.html` replicates Claude Desktop's rendering quirks
 (Tailwind-prose absolute list markers, Claude-shipped `dir="ltr"`
-attributes, epitaxy cards, streaming mutations, code blocks) and runs
-27 assertions against the real `scripts/inject-snippet.js`. Serve the
+attributes, epitaxy cards/user bubbles/codeblocks, streaming mutations)
+and runs 31 assertions against the real `scripts/inject-snippet.js`. Serve the
 repo root over HTTP and open the page -- results render in-page and in
 `window.__rtlResults`:
 

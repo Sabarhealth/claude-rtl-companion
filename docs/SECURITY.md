@@ -76,9 +76,9 @@ exercising one.
 
 ## What is injected into Claude
 
-A single `<style id="claude-rtl-companion">` element with the rules
-from `styles/rtl.css`. The injected JavaScript does the following and
-nothing else:
+A single `<style id="claude-rtl-companion">` element whose rules are
+embedded in the snippet itself as a string literal. The injected
+JavaScript does the following and nothing else:
 
 1. Removes the previous `<style id="claude-rtl-companion">` if present.
 2. Creates a new `<style>` element, sets `textContent` from a string

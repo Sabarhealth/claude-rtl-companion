@@ -85,6 +85,19 @@ npm run build</code></pre>
   <h2 id="c19" dir="ltr">סיכום התהליך</h2>
   <blockquote id="c20"><p>ציטוט בעברית</p></blockquote>
 
+  <!-- c21: user message bubble — plain-div text, no <p> (epitaxy-user-turn) -->
+  <div class="epitaxy-user-turn" id="c21">למה הסעיפים לא מתיישרים? check this out</div>
+
+  <!-- c22: Claude's codeblock container — "codeblock" has no hyphen, so
+       [class*="code-block"] does NOT match; code lines are divs, not <pre> -->
+  <div class="epitaxy-codeblock" id="c22"><div># הערה בעברית בקוד</div><div>npm run build</div></div>
+
+  <!-- c23: diff viewer container -->
+  <div class="epitaxy-diff" id="c23"><div>- שורה ישנה</div><div>+ שורה חדשה</div></div>
+
+  <!-- c24: composer by epitaxy class alone (no contenteditable fallback) -->
+  <div class="epitaxy-prompt-input" id="c24"></div>
+
 </div>
 
 <pre id="results">running…</pre>
@@ -140,6 +153,16 @@ window.runRtlAssertions = async function () {
     dir($('c18')) + ' attr=' + $('c18').getAttribute('dir'));
   t('c19 h2 shipped ltr -> rtl', dir($('c19')) === 'rtl', dir($('c19')));
   t('c20 blockquote -> rtl', dir($('c20')) === 'rtl', dir($('c20')));
+  t('c21 user-turn bubble -> rtl', dir($('c21')) === 'rtl', dir($('c21')));
+  t('c22 epitaxy-codeblock forced ltr', dir($('c22')) === 'ltr' &&
+    !$('c22').hasAttribute('dir') &&
+    getComputedStyle($('c22')).textAlign === 'left',
+    dir($('c22')) + ' attr=' + $('c22').getAttribute('dir'));
+  t('c23 epitaxy-diff forced ltr', dir($('c23')) === 'ltr' &&
+    dir($('c23').firstElementChild) === 'ltr',
+    dir($('c23')));
+  t('c24 prompt-input by class -> dir=auto', $('c24').getAttribute('dir') === 'auto',
+    $('c24').getAttribute('dir'));
 
   const fails = cases.filter(c => !c.pass);
   const summary = { total: cases.length, failed: fails.length, fails };

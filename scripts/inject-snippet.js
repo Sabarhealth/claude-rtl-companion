@@ -1,25 +1,22 @@
 ﻿// =============================================================================
-// Claude RTL Companion -- DevTools console snippet (v16)
+// Claude RTL Companion -- DevTools console snippet (v17)
 // =============================================================================
-// v16 generalizes v15's lesson to EVERY tagging pass. A simulation harness
-// (test/simulation.html) proved v15 still had six holes, all one bug class:
-// the `:not([dir])` selectors treated "has a dir attribute" as "already
-// processed", so any element Claude Desktop shipped with dir="ltr" -- and any
-// element WE tagged early during streaming -- was never re-evaluated.
+// v17 extends coverage using a live inventory of Claude Desktop's epitaxy
+// class names (dumped from the real app):
+//   - .epitaxy-user-turn: the user's own message bubble -- plain-div text,
+//     not <p>, so the semantic tag set never matched it. Hebrew -> rtl.
+//   - .epitaxy-codeblock / .epitaxy-diff: NOT caught by [class*="code-block"]
+//     (no hyphen in "codeblock"), so they join the code skip-list and the
+//     forced-LTR CSS explicitly.
+//   - .epitaxy-prompt-input: the composer, covered explicitly instead of
+//     relying on contenteditable/framework-class heuristics.
 //
-// Failures found by the harness against v15:
-//   - <p dir="ltr">, <h2 dir="ltr">, <table dir="ltr">, epitaxy card with
-//     shipped dir: all skipped, stayed LTR despite Hebrew content.
-//   - <li dir="ltr"> inside a Hebrew list: kept its explicit ltr, breaking
-//     marker-side inheritance (the v9 lesson).
-//   - Streaming: a paragraph tagged dir="auto" while still English-only was
-//     never re-checked when Hebrew streamed in later -- it stayed LTR.
-//
-// v16 strategy -- stateless re-evaluation:
-//   - Selectors match ALL target elements (no :not([dir]) state-marker).
+// Core strategy (v16) -- stateless re-evaluation:
+//   - Selectors match ALL target elements (no :not([dir]) state-marker;
+//     Claude ships its own first-strong dir="ltr" that must be overridden,
+//     and streamed content must be re-checked as it grows).
 //   - Every pass computes the desired dir from current content and writes
-//     only when the value actually differs (cheap, React-churn-friendly,
-//     and streaming-safe: content changes flip the dir on the next tick).
+//     only when the value actually differs (cheap, React-churn-friendly).
 //   - Shipped dir="ltr" on pure-English block elements is left alone (it
 //     resolves the same as "auto"; rewriting would just fight React).
 //   - li/p descendants of our RTL lists get any shipped dir stripped so
@@ -27,10 +24,9 @@
 // ponytail: full re-scan each pass; if very long chats ever lag, fast-path
 // elements whose textContent length is unchanged.
 //
-// Full per-version history (v3..v16, incl. the v9 marker-inheritance and v11
-// plaintext lessons) lives in CHANGELOG.md and git log -- not here, to keep
-// the DevTools paste payload small.
-// Verify changes against test/simulation.html (27 assertions) before bumping.
+// Full per-version history lives in CHANGELOG.md and git log -- not here, to
+// keep the DevTools paste payload small.
+// Verify changes against test/simulation.html (31 assertions) before bumping.
 // =============================================================================
 
 (function () {
@@ -53,7 +49,7 @@ input[type="text"], input[type="search"], input[type="email"],
 input[type="url"], input:not([type]),
 [contenteditable="true"], [contenteditable=""],
 [role="textbox"],
-.ProseMirror, .tiptap, .ql-editor,
+.ProseMirror, .tiptap, .ql-editor, .epitaxy-prompt-input,
 [data-lexical-editor], [data-lexical-editor="true"],
 [data-slate-editor="true"], [data-slate-node="value"],
 [aria-label*="Message" i], [aria-label*="message" i],
@@ -85,13 +81,17 @@ ul:dir(rtl) > li, ol:dir(rtl) > li {
   padding-right: 0.375em !important;
 }
 
-/* Code blocks always LTR */
-pre, code, .code-block__code, [class*="code-block"], [class*="CodeBlock"] {
+/* Code blocks always LTR. .epitaxy-codeblock / .epitaxy-diff are Claude
+   Desktop's own containers -- "codeblock" has no hyphen, so the generic
+   [class*="code-block"] patterns do NOT match them. */
+pre, code, .code-block__code, [class*="code-block"], [class*="CodeBlock"],
+.epitaxy-codeblock, .epitaxy-diff {
   unicode-bidi: isolate !important;
   direction: ltr !important;
   text-align: left !important;
 }
-pre *, code *, .code-block__code *, [class*="code-block"] *, [class*="CodeBlock"] * {
+pre *, code *, .code-block__code *, [class*="code-block"] *, [class*="CodeBlock"] *,
+.epitaxy-codeblock *, .epitaxy-diff * {
   unicode-bidi: isolate !important;
   direction: ltr !important;
 }
@@ -124,14 +124,17 @@ pre *, code *, .code-block__code *, [class*="code-block"] *, [class*="CodeBlock"
   // from current content and writes only on change (see setDir).
   const AUTO_SELECTOR = AUTO_TAGS.map(t => t.toLowerCase()).join(',');
   const RTL_RX = /[֐-׿؀-ۿ܀-ݏހ-޿]/;
-  const IN_CODE = 'pre, code, [class*="code-block"], [class*="CodeBlock"]';
+  const IN_CODE = 'pre, code, [class*="code-block"], [class*="CodeBlock"], ' +
+                  '.epitaxy-codeblock, .epitaxy-diff';
 
   // Claude Desktop's custom UI containers (the "epitaxy" design system).
-  // These cards/rows use <button>/<div>/<span> with custom classes rather
-  // than semantic tags, so AUTO_SELECTOR alone misses them. We tag the
-  // outer card with dir="rtl" when it contains Hebrew; flex/grid layouts
-  // inside the card reorder naturally based on inherited direction.
-  const CLAUDE_CARD_SELECTOR = '.epitaxy-approval-card, .epitaxy-branch-row';
+  // These cards/rows/bubbles use <button>/<div>/<span> with custom classes
+  // rather than semantic tags, so AUTO_SELECTOR alone misses them. We tag
+  // the outer container with dir="rtl" when it contains Hebrew; flex/grid
+  // layouts inside reorder naturally based on inherited direction.
+  // .epitaxy-user-turn is the user's own message bubble (plain-div text).
+  const CLAUDE_CARD_SELECTOR =
+    '.epitaxy-approval-card, .epitaxy-branch-row, .epitaxy-user-turn';
 
   // Editable surface selector: covers textarea, generic contenteditable,
   // and rich-text editor frameworks (Lexical, ProseMirror, Tiptap, Quill,
@@ -150,6 +153,7 @@ pre *, code *, .code-block__code *, [class*="code-block"] *, [class*="CodeBlock"
     '.ProseMirror',
     '.tiptap',
     '.ql-editor',
+    '.epitaxy-prompt-input',
     '[data-lexical-editor]',
     '[data-slate-editor="true"]'
   ].join(',');
@@ -371,13 +375,13 @@ pre *, code *, .code-block__code *, [class*="code-block"] *, [class*="CodeBlock"
       e.tagName === 'TEXTAREA' || e.tagName === 'INPUT' ||
       e.isContentEditable ||
       e.getAttribute('role') === 'textbox' ||
-      e.matches('.ProseMirror, .tiptap, .ql-editor, [data-lexical-editor], [data-slate-editor]');
+      e.matches('.ProseMirror, .tiptap, .ql-editor, .epitaxy-prompt-input, [data-lexical-editor], [data-slate-editor]');
 
     document.querySelectorAll('[dir="auto"], [dir="rtl"]').forEach(e => {
       const tag = e.tagName;
       if (AUTO_TAGS.includes(tag) || isInputLike(e) ||
           tag === 'UL' || tag === 'OL' || tag === 'TABLE' ||
-          e.matches('.epitaxy-approval-card, .epitaxy-branch-row')) {
+          e.matches(CLAUDE_CARD_SELECTOR)) {
         e.removeAttribute('dir');
       }
     });
@@ -389,5 +393,5 @@ pre *, code *, .code-block__code *, [class*="code-block"] *, [class*="CodeBlock"
     return 'removed';
   };
 
-  return 'Claude RTL v16 applied (' + initialTagged + ' elements tagged; stateless re-evaluation, streaming-safe). Run claudeRtlRemove() to undo.';
+  return 'Claude RTL v17 applied (' + initialTagged + ' elements tagged; covers user-turn bubbles, epitaxy codeblock/diff/prompt-input). Run claudeRtlRemove() to undo.';
 })();

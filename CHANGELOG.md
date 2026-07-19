@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### v17 (snippet) -- live epitaxy class inventory coverage
+- Coverage extended using a class-name inventory dumped from the running
+  Claude Desktop app (`[class*="epitaxy-"]` scan):
+  - `.epitaxy-user-turn` -- the user's own message bubble. It is plain
+    div text (no `<p>`), so the semantic tag set never matched it and
+    Hebrew user messages stayed LTR. Now tagged `dir="rtl"` when they
+    contain Hebrew, like the other epitaxy cards.
+  - `.epitaxy-codeblock` / `.epitaxy-diff` -- Claude's code and diff
+    containers. "codeblock" has no hyphen, so the generic
+    `[class*="code-block"]` patterns did NOT match them. Both join the
+    tagging skip-list and the forced-LTR CSS explicitly.
+  - `.epitaxy-prompt-input` -- the composer, now covered by its own
+    class in the input selector and CSS instead of relying only on
+    contenteditable/framework-class heuristics.
+- Removal helper updated accordingly (user-turn bubbles and prompt-input
+  are cleaned up on `claudeRtlRemove()`).
+- Harness grew to 31 assertions (user bubble, codeblock-as-divs, diff
+  container, prompt-input-by-class). Zero attribute churn re-verified.
+
+### Removed
+- `styles/rtl.css` and the launcher's `-CssPath` parameter: dead since
+  the snippet began embedding its own CSS. The file had drifted (v9-era
+  copy, no button/table/epitaxy coverage) and nothing consumed it --
+  `-CssPath` was parsed but never read. README and SECURITY.md updated
+  to match.
+
 ### v16 (snippet) -- stateless re-evaluation; simulation test harness
 - Added `test/simulation.html`: a 27-assertion harness that mimics Claude
   Desktop's rendering (Tailwind-prose absolute `::before` list markers,

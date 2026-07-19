@@ -54,13 +54,11 @@ param(
     # mode explicitly.
     [switch]$NoConfirm,
 
-    [string]$CssPath,
     [string]$SnippetPath
 )
 
 $ErrorActionPreference = 'Stop'
 $scriptDir = Split-Path -Parent $PSCommandPath
-if (-not $CssPath)     { $CssPath     = Join-Path $scriptDir 'styles\rtl.css' }
 if (-not $SnippetPath) { $SnippetPath = Join-Path $scriptDir 'scripts\inject-snippet.js' }
 
 $ConfigPath = Join-Path $env:APPDATA 'Claude\config.json'
