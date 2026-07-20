@@ -571,36 +571,43 @@ public struct RECT { public int Left; public int Top; public int Right; public i
     # area to focus the session view, then verify by the DevTools title
     # ('local_' = session document, otherwise we hit the shell and retry).
     # In Immediate mode (Ctrl+Alt+R) the user's own focus picks the target.
-    $title = $null
-    $leftover = Find-DevToolsWindow -TimeoutSec 1
-    if ($leftover) {
-        $title = $leftover   # a DevTools window is already open -- use it
-    } else {
-        $attempt = 0
-        while (-not $title) {
-            $attempt++
-            if (-not $Immediate) { Start-Sleep -Seconds 2 }   # let the app settle
-            if (-not (Set-TypingTarget 'Claude' 'Claude*')) {
-                Write-Warn "Could not safely focus the Claude window -- paste manually (snippet is on the clipboard)."
-                return
+    # Acquire a DevTools window attached to the SESSION view. A window may
+    # already exist (CLAUDE_DEV_TOOLS=detach auto-open fires on some
+    # launches, or a leftover) -- it goes through the SAME verification as
+    # one we open ourselves; a non-session target gets closed and retried.
+    $title = Find-DevToolsWindow -TimeoutSec 1
+    $attempt = 0
+    while ($true) {
+        if ($title) {
+            # A freshly opened window may still be loading and titled just
+            # "Developer Tools" -- let it settle and re-read, the URL suffix
+            # carries the 'local_' session marker we verify against.
+            if ($title -notlike '*-*') {
+                Start-Sleep -Milliseconds 1500
+                $settled = Find-DevToolsWindow -TimeoutSec 1
+                if ($settled) { $title = $settled }
             }
-            if (-not $Immediate) {
-                Click-InForeground 0.62 0.45   # focus the session view
-            }
-            $shell.SendKeys('^%i')   # Ctrl+Alt+I
-            $title = Find-DevToolsWindow -TimeoutSec 15
-            if (-not $title) {
-                Write-Warn "No DevTools window appeared -- skipping auto-inject. Is allowDevTools enabled? (-Mode Setup)."
-                return
-            }
-            if (-not $Immediate -and $title -notlike '*local_*' -and $attempt -lt 3) {
-                # Hit the shell document -- close its DevTools and retry the
-                # click (the session view may not have been ready yet).
-                Write-Info "DevTools attached to the shell ('$title'); closing and retrying ($attempt)."
-                if (Set-TypingTarget $title $DevToolsTitlePattern) { $shell.SendKeys('%{F4}') }
-                Start-Sleep -Milliseconds 900
-                $title = $null
-            }
+            if ($Immediate -or $title -like '*local_*') { break }   # good target
+            if ($attempt -ge 3) { break }   # give up -> shell as best effort
+            Write-Info "DevTools attached to '$title' (not a session view); closing and retrying."
+            if (Set-TypingTarget $title $DevToolsTitlePattern) { $shell.SendKeys('%{F4}') }
+            Start-Sleep -Milliseconds 900
+            $title = $null
+        }
+        $attempt++
+        if (-not $Immediate) { Start-Sleep -Seconds 2 }   # let the app settle
+        if (-not (Set-TypingTarget 'Claude' 'Claude*')) {
+            Write-Warn "Could not safely focus the Claude window -- paste manually (snippet is on the clipboard)."
+            return
+        }
+        if (-not $Immediate) {
+            Click-InForeground 0.62 0.45   # focus the session view
+        }
+        $shell.SendKeys('^%i')   # Ctrl+Alt+I
+        $title = Find-DevToolsWindow -TimeoutSec 15
+        if (-not $title) {
+            Write-Warn "No DevTools window appeared -- skipping auto-inject. Is allowDevTools enabled? (-Mode Setup)."
+            return
         }
     }
     Write-Info "DevTools window: '$title'"
