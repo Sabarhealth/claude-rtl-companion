@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### v19 (snippet) -- geometric title-bar pad, flush start-edge buttons
+- With the launcher's unmirrored (LTR) window the OS controls sit on the
+  right, so the app's hamburger/panel buttons can sit flush at the start
+  edge -- but the old pad logic sniffed navigator.language, which the
+  launcher's `--lang=en-US` falsifies, and could pad when it should not.
+- The pad decision is now purely geometric: pad `padding-inline-start`
+  only when `windowControlsOverlay.getTitlebarAreaRect().x > 0` (the OS
+  controls actually occupy the left edge, i.e. a mirrored window), by
+  exactly the controls' width (`rect.x`). Zero pad otherwise. The 140px
+  locale fallback is removed entirely; legacy mirrored-window users
+  without WCO should launch via `LaunchLtr` instead.
+- Applied automatically everywhere via the self-update + snippet sync
+  chain. Harness: 32/32 (the WCO path no-ops in a plain browser page).
+
 ### Launcher: DevTools zoom self-heal + stuck-modifier hardening
 - User observed DevTools opening "zoomed out" at startup. Root cause: a
   chord's Ctrl can register as still held when the next typed character

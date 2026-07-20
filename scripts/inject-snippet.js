@@ -1,6 +1,15 @@
 ﻿// =============================================================================
-// Claude RTL Companion -- DevTools console snippet (v18)
+// Claude RTL Companion -- DevTools console snippet (v19)
 // =============================================================================
+// v19: the title-bar pad decision is now purely GEOMETRIC. The old logic
+// padded based on locale sniffing (navigator.language), which lies under the
+// launcher's --lang=en-US and padded when it shouldn't. Now: pad
+// inline-start only when the WCO titlebar area does not start at x=0 (i.e.
+// the OS window controls actually sit on the left and would overlap the
+// app's buttons), by exactly the controls' width. In an unmirrored (LTR)
+// window the buttons sit flush at the start edge with zero pad. The locale
+// fallback (140px) is removed entirely.
+//
 // v18: blockquote's decorative border (Tailwind prose draws it with a
 // physical border-left) now flips to the right edge in RTL context, with the
 // matching padding mirror. Uses --tw-prose-quote-borders when defined so the
@@ -245,25 +254,24 @@ pre *, code *, .code-block__code *, [class*="code-block"] *, [class*="CodeBlock"
   // --------------------------------------------------------------------------
   // 3. Title-bar overlap fix (window controls overlay)
   // --------------------------------------------------------------------------
-  const FALLBACK_PAD_PX = 140;
-
+  // Purely geometric (v19): getTitlebarAreaRect() returns the area LEFT OVER
+  // for the app's own title-bar UI. If it starts past the window's left edge
+  // (rect.x > 0), the OS window controls sit on the LEFT (mirrored/RTL
+  // window frame) and would cover the app's buttons -- pad inline-start by
+  // exactly the controls' width. In an unmirrored window rect.x is 0 and the
+  // buttons sit flush at the start edge with no pad. No locale sniffing:
+  // navigator.language lies under the launcher's --lang=en-US anyway.
   function applyTitleBarPad() {
     const wco = navigator.windowControlsOverlay || null;
-    const locale = ((navigator.language || '') + ',' + (navigator.languages || []).join(','))
-      .toLowerCase();
-    const localeIsRtl = /\b(he|iw|ar|fa|ur|yi|ps|sd)\b/.test(locale);
-
     const topBar = document.querySelector('.draggable:not(.draggable-none)');
     if (!topBar) return false;
 
     let padStart = 0;
     if (wco && wco.visible && typeof wco.getTitlebarAreaRect === 'function') {
       const rect = wco.getTitlebarAreaRect();
-      if (rect && rect.width > 0 && rect.x === 0) {
-        padStart = Math.round(rect.width);
+      if (rect && rect.x > 0) {
+        padStart = Math.round(rect.x);
       }
-    } else if (localeIsRtl) {
-      padStart = FALLBACK_PAD_PX;
     }
 
     if (padStart > 0) {
@@ -410,5 +418,5 @@ pre *, code *, .code-block__code *, [class*="code-block"] *, [class*="CodeBlock"
     return 'removed';
   };
 
-  return 'Claude RTL v18 applied (' + initialTagged + ' elements tagged; adds RTL blockquote border flip). Run claudeRtlRemove() to undo.';
+  return 'Claude RTL v19 applied (' + initialTagged + ' elements tagged; geometric title-bar pad, flush start-edge buttons in LTR windows). Run claudeRtlRemove() to undo.';
 })();
