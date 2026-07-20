@@ -622,10 +622,21 @@ public struct RECT { public int Left; public int Top; public int Right; public i
         Write-Warn "Could not safely focus the DevTools window -- paste manually (snippet is on the clipboard)."
         return
     }
-    $esc = $SnippetName -replace '([+^%~(){}\[\]])', '{$1}'  # SendKeys metachars
+    # Normalize DevTools zoom first. A chord's Ctrl can register as still
+    # held when the next typed character arrives while DevTools is busy --
+    # a '-' then becomes Ctrl+Minus (zoom out), and DevTools PERSISTS its
+    # zoom level across sessions. Ctrl+0 both prevents confusion and heals
+    # any past accident.
+    $shell.SendKeys('^0')
+    Start-Sleep -Milliseconds 300
+    # Quick Open filter: lowercase alphanumerics only. Fuzzy matching still
+    # finds the snippet ("claudertl" -> "Claude-RTL"), and dropping hyphens/
+    # uppercase avoids exactly the stuck-modifier race described above.
+    $filter = ($SnippetName.ToLower() -replace '[^a-z0-9]', '')
+    if (-not $filter) { $filter = $SnippetName -replace '([+^%~(){}\[\]])', '{$1}' }
     $shell.SendKeys('^p')        # Quick Open (NOT ^+p -- see note above)
     Start-Sleep -Milliseconds 500
-    $shell.SendKeys('!' + $esc)  # "!" is literal in WScript SendKeys (not Alt)
+    $shell.SendKeys('!' + $filter)  # "!" is literal in WScript SendKeys (not Alt)
     Start-Sleep -Milliseconds 600
     $shell.SendKeys('{ENTER}')   # opens the snippet in the editor...
     Start-Sleep -Milliseconds 800

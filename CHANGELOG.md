@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Launcher: DevTools zoom self-heal + stuck-modifier hardening
+- User observed DevTools opening "zoomed out" at startup. Root cause: a
+  chord's Ctrl can register as still held when the next typed character
+  arrives while DevTools is busy loading -- the '-' in "!Claude-RTL"
+  then lands as Ctrl+Minus (zoom out), and DevTools PERSISTS its zoom
+  across sessions, so one race sticks forever.
+- The Quick Open filter is now derived as lowercase alphanumerics only
+  ("!claudertl" -- fuzzy matching still finds Claude-RTL), removing the
+  hyphen and Shift chords from the typed stream entirely.
+- Every inject now sends Ctrl+0 right after focusing DevTools:
+  normalizes zoom going forward and heals any previously-stuck level.
+
 ### Docs: upgrade guide for pre-launcher installs
 - README gained an "Upgrading from an older install" section: the
   canonical 3-step path (git pull -> InstallShortcut + pin -> verify the
