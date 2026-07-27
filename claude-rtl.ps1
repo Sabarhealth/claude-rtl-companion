@@ -410,17 +410,49 @@ function Invoke-LaunchLtrMode {
 # (verified live on Claude Desktop 1.22209.3.0; it is NOT "DevTools").
 $DevToolsTitlePattern = '*Developer Tools*'
 
+# Process.MainWindowTitle exposes only ONE window per process -- whichever
+# Windows currently deems "main" -- so an open DevTools window can hide
+# behind the focused main window and the old finder would miss it (observed
+# live). Enumerate ALL visible top-level windows instead.
+if (-not ('ClaudeRtl.WinEnum' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+namespace ClaudeRtl {
+  public static class WinEnum {
+    delegate bool EnumProc(IntPtr h, IntPtr lp);
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr lp);
+    [DllImport("user32.dll", CharSet = CharSet.Auto)] static extern int GetWindowText(IntPtr h, StringBuilder t, int c);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+    public static System.Collections.Generic.List<string> Titles() {
+      var list = new System.Collections.Generic.List<string>();
+      EnumWindows((h, lp) => {
+        if (IsWindowVisible(h)) {
+          var sb = new StringBuilder(512);
+          GetWindowText(h, sb, 512);
+          if (sb.Length > 0) list.Add(sb.ToString());
+        }
+        return true;
+      }, IntPtr.Zero);
+      return list;
+    }
+  }
+}
+'@ -ErrorAction SilentlyContinue
+}
+
 function Find-DevToolsWindow {
     param([int]$TimeoutSec)
     $deadline = (Get-Date).AddSeconds($TimeoutSec)
-    while ((Get-Date) -lt $deadline) {
-        Start-Sleep -Milliseconds 500
-        $win = Get-Process -Name 'Claude' -ErrorAction SilentlyContinue |
-            Where-Object { $_.MainWindowTitle -like $DevToolsTitlePattern } |
+    while ($true) {
+        $t = [ClaudeRtl.WinEnum]::Titles() |
+            Where-Object { $_ -like $DevToolsTitlePattern } |
             Select-Object -First 1
-        if ($win) { return $win.MainWindowTitle }
+        if ($t) { return $t }
+        if ((Get-Date) -ge $deadline) { return $null }
+        Start-Sleep -Milliseconds 500
     }
-    return $null
 }
 
 function Invoke-InjectMode {
