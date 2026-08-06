@@ -64,6 +64,14 @@ $ErrorActionPreference = 'Stop'
 $scriptDir = Split-Path -Parent $PSCommandPath
 if (-not $SnippetPath) { $SnippetPath = Join-Path $scriptDir 'scripts\inject-snippet.js' }
 
+# Raw run marker, written before anything else can fail -- answers "did the
+# hotkey/shortcut actually invoke the script at all" independently of the
+# transcript machinery.
+try {
+    Add-Content -Path (Join-Path $env:TEMP 'claude-rtl-runs.txt') `
+        -Value "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') mode=$Mode" -ErrorAction SilentlyContinue
+} catch {}
+
 $ConfigPath = Join-Path $env:APPDATA 'Claude\config.json'
 
 # ============================================================================
@@ -559,12 +567,17 @@ public struct RECT { public int Left; public int Top; public int Right; public i
     # AppActivate alone loses to Windows' foreground lock when the user is
     # actively working in another app; SwitchToThisWindow is the fallback.
     function Set-TypingTarget([string]$Title, [string]$Pattern) {
-        $null = $shell.AppActivate($Title)
-        Start-Sleep -Milliseconds 700
-        $fg = [ClaudeRtl.Win32]::GetForegroundWindow()
-        $sb = New-Object System.Text.StringBuilder 512
-        [void][ClaudeRtl.Win32]::GetWindowText($fg, $sb, 512)
-        if ($sb.ToString() -notlike $Pattern) {
+        # Up to 3 activate+verify rounds: window transitions can transiently
+        # report an EMPTY foreground title right after a window opens
+        # (observed live), and a single-shot check bailed on it.
+        $fg = [IntPtr]::Zero
+        for ($round = 1; $round -le 3; $round++) {
+            $null = $shell.AppActivate($Title)
+            Start-Sleep -Milliseconds 700
+            $fg = [ClaudeRtl.Win32]::GetForegroundWindow()
+            $sb = New-Object System.Text.StringBuilder 512
+            [void][ClaudeRtl.Win32]::GetWindowText($fg, $sb, 512)
+            if ($sb.ToString() -like $Pattern) { break }
             $h = [ClaudeRtl.Win32]::FindWindow($null, $Title)
             if ($h -ne [IntPtr]::Zero) {
                 [ClaudeRtl.Win32]::SwitchToThisWindow($h, $true)
@@ -573,10 +586,12 @@ public struct RECT { public int Left; public int Top; public int Right; public i
                 $sb = New-Object System.Text.StringBuilder 512
                 [void][ClaudeRtl.Win32]::GetWindowText($fg, $sb, 512)
             }
-        }
-        if ($sb.ToString() -notlike $Pattern) {
-            Write-Warn "Foreground window is '$($sb.ToString())', expected '$Pattern' -- not typing."
-            return $false
+            if ($sb.ToString() -like $Pattern) { break }
+            if ($round -eq 3) {
+                Write-Warn "Foreground window is '$($sb.ToString())', expected '$Pattern' -- not typing."
+                return $false
+            }
+            Start-Sleep -Milliseconds 500
         }
         $hkl = [ClaudeRtl.Win32]::LoadKeyboardLayout('00000409', 1)  # KLF_ACTIVATE
         [void][ClaudeRtl.Win32]::PostMessage($fg, 0x0050, [IntPtr]::Zero, $hkl)  # WM_INPUTLANGCHANGEREQUEST
