@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Launcher: survive Claude 1.259xx -- editor-focus click before sync
+- Claude Desktop updated 1.22209 -> 1.25927 (new Electron/DevTools). Two
+  findings from live re-verification on the new build:
+  1. Quick Open's Enter now leaves FOCUS in the navigator, not the
+     editor -- so the select-all/paste/save sync silently no-oped (the
+     saved snippet was still v17, proving the sync had actually never
+     landed on the old build either; the run step masked it because the
+     stale snippet still produced correct-looking alignment). The
+     status-bar Line/Column indicator is the tell. Auto-inject now
+     CLICKS into the editor pane after Quick Open before syncing --
+     verified live: saved snippet content flipped to v19 and ran.
+  2. A Store update relaunches Claude WITHOUT the CLI flags; clicking
+     the pinned shortcut then only focuses the flagless instance (by
+     design). The remedy remains: quit fully, relaunch via the
+     shortcut. Re-run InstallShortcut to refresh the (cosmetic) icons.
+- Everything else survived the version bump unchanged: dynamic MSIX exe
+  resolution, epitaxy URLs, window titles, allowDevTools, Ctrl+Alt+I,
+  Quick Open '!' semantics, and Ctrl+Enter run.
+
 ### v19 (snippet) -- geometric title-bar pad, flush start-edge buttons
 - With the launcher's unmirrored (LTR) window the OS controls sit on the
   right, so the app's hamburger/panel buttons can sit flush at the start

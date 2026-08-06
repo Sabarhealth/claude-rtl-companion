@@ -674,6 +674,12 @@ public struct RECT { public int Left; public int Top; public int Right; public i
     Start-Sleep -Milliseconds 800
     # ...because on current DevTools (148) "!name"+Enter only OPENS the
     # snippet -- it does not run it (verified live with screenshots).
+    # Newer DevTools builds (Claude 1.259xx) leave FOCUS in the navigator
+    # after Quick Open, so select-all/paste/save would silently no-op
+    # (verified live: the Line/Column indicator vanishes from the status
+    # bar). Click into the editor pane to focus it before typing.
+    Click-InForeground 0.55 0.45
+    Start-Sleep -Milliseconds 300
     # While the editor is focused, SYNC the saved snippet from the repo:
     # the clipboard holds the latest inject-snippet.js (Copy-SnippetToClipboard
     # ran at the start of both LaunchLtr and Inject), so select-all + paste +
