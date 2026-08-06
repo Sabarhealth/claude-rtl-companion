@@ -379,7 +379,7 @@ function Invoke-LaunchLtrMode {
     # The pinned shortcut runs this hidden, so also log to a file --
     # otherwise auto-inject failures are invisible.
     $log = Join-Path $env:TEMP 'claude-rtl-launch.log'
-    try { Start-Transcript -Path $log -ErrorAction SilentlyContinue | Out-Null } catch {}
+    try { Start-Transcript -Path $log -Append -ErrorAction SilentlyContinue | Out-Null } catch {}
     try {
         $info = Get-ClaudeExeInfo
         $running = @(Get-RunningClaudeMainProcesses)
@@ -471,17 +471,23 @@ function Invoke-InjectMode {
 [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
 '@ -ErrorAction SilentlyContinue
 
-    $running = @(Get-RunningClaudeMainProcesses)
-    if ($running.Count -eq 0) {
-        Write-Err "Claude is not running. Launch it first (Claude-RTL.cmd), open your session, then run Inject."
-        exit 1
-    }
+    $log = Join-Path $env:TEMP 'claude-rtl-launch.log'
+    try { Start-Transcript -Path $log -Append -ErrorAction SilentlyContinue | Out-Null } catch {}
+    try {
+        $running = @(Get-RunningClaudeMainProcesses)
+        if ($running.Count -eq 0) {
+            Write-Err "Claude is not running. Launch it first (Claude-RTL.cmd), open your session, then run Inject."
+            exit 1
+        }
 
-    # The clipboard feeds the editor-sync step in Invoke-AutoInject (the
-    # saved DevTools snippet is refreshed from the repo on every inject).
-    Update-RepoQuietly
-    Copy-SnippetToClipboard
-    Invoke-AutoInject -Immediate
+        # The clipboard feeds the editor-sync step in Invoke-AutoInject (the
+        # saved DevTools snippet is refreshed from the repo on every inject).
+        Update-RepoQuietly
+        Copy-SnippetToClipboard
+        Invoke-AutoInject -Immediate
+    } finally {
+        try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch {}
+    }
 
     # Restore the user's keyboard layout on the MAIN window -- the en-US
     # switch we did for the chords would otherwise silently leave them
@@ -607,6 +613,20 @@ public struct RECT { public int Left; public int Top; public int Right; public i
     # already exist (CLAUDE_DEV_TOOLS=detach auto-open fires on some
     # launches, or a leftover) -- it goes through the SAME verification as
     # one we open ourselves; a non-session target gets closed and retried.
+    if ($Immediate) {
+        # "Inject where I am": a leftover DevTools window (auto-open or a
+        # previous run) would hijack the target, because in Immediate mode
+        # we cannot verify which view the user means by title alone. Close
+        # ALL existing DevTools windows first, then open fresh from the
+        # user's focus.
+        for ($sweep = 0; $sweep -lt 4; $sweep++) {
+            $stale = Find-DevToolsWindow -TimeoutSec 0
+            if (-not $stale) { break }
+            if (-not (Set-TypingTarget $stale $DevToolsTitlePattern)) { break }
+            $shell.SendKeys('%{F4}')
+            Start-Sleep -Milliseconds 800
+        }
+    }
     $title = Find-DevToolsWindow -TimeoutSec 1
     $attempt = 0
     while ($true) {
