@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Launcher: survive Claude 1.26832 -- bidi-marked titles; auto-restart
+- Claude 1.26832 wraps window titles in Unicode bidi control marks
+  (U+202A "Claude" U+202C -- measured codepoint-by-codepoint), which
+  silently broke `AppActivate('Claude')`, `FindWindow`, and the
+  `'Claude*'` pattern checks -- hotkey injects failed with confusing
+  "No DevTools window appeared" / empty-foreground symptoms.
+  All title comparisons now strip bidi control marks first
+  (`Strip-BidiMarks`), and activation always uses the EXACT marked
+  title discovered by window enumeration (`Find-ClaudeMainTitle`).
+  Verified live: Ctrl+Alt+I works unchanged on 1.26832 once the window
+  is correctly focused.
+- `LaunchLtr` now AUTO-RESTARTS a flagless instance: Store updates
+  relaunch Claude without our CLI flags (mirrored window, ghost pane);
+  clicking the LTR launcher in that state previously just focused the
+  broken instance and told the user to quit manually. It now closes the
+  flagless instance gracefully (falling back to Stop-Process, since the
+  close button minimizes to tray) and proceeds with a fresh flagged
+  launch -- post-update recovery is one click again.
+
 ### Launcher: survive Claude 1.259xx -- editor-focus click before sync
 - Claude Desktop updated 1.22209 -> 1.25927 (new Electron/DevTools). Two
   findings from live re-verification on the new build:

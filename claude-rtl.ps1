@@ -392,13 +392,41 @@ function Invoke-LaunchLtrMode {
         $info = Get-ClaudeExeInfo
         $running = @(Get-RunningClaudeMainProcesses)
         if ($running.Count -gt 0) {
-            # Electron's single-instance lock makes a second launch ignore CLI
-            # flags -- launching again would silently do nothing. Behave like a
-            # normal app icon instead: focus the existing window.
-            Write-Info "Claude is already running (PID $($running[0].ProcessId)); focusing it."
-            Write-Info "For the LTR window chrome to apply, quit Claude fully (tray -> Quit) and launch again."
-            Start-Process explorer.exe $info.AppUmi
-            return
+            if ($running[0].CommandLine -match 'force-ui-direction') {
+                # Already running WITH our flags -- behave like a normal app
+                # icon: focus the existing window. (Electron's single-instance
+                # lock would ignore flags on a second launch anyway.)
+                Write-Info "Claude is already running with LTR flags (PID $($running[0].ProcessId)); focusing it."
+                Start-Process explorer.exe $info.AppUmi
+                return
+            }
+            # Running WITHOUT the flags -- the classic post-Store-update
+            # state (updates relaunch the app flagless, mirrored, ghost pane
+            # and all). Clicking the LTR launcher in that state is an
+            # explicit request for a correct instance: close the flagless
+            # one gracefully and fall through to a fresh flagged launch.
+            Write-Info "Running instance has NO LTR flags (post-update relaunch?); restarting it."
+            $proc = Get-Process -Id $running[0].ProcessId -ErrorAction SilentlyContinue
+            if ($proc) { $null = $proc.CloseMainWindow() }
+            $dl = (Get-Date).AddSeconds(8)
+            while ((Get-Date) -lt $dl -and @(Get-RunningClaudeMainProcesses).Count -gt 0) {
+                Start-Sleep -Milliseconds 700
+            }
+            if (@(Get-RunningClaudeMainProcesses).Count -gt 0) {
+                # Close button often minimizes to tray instead of quitting;
+                # stop the main process (chat state is server-side, and the
+                # user asked for a restart by clicking the launcher).
+                Write-Info "Graceful close did not exit (tray-minimize?); stopping the process."
+                Get-RunningClaudeMainProcesses | ForEach-Object {
+                    try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {}
+                }
+                Start-Sleep -Seconds 2
+            }
+            if (@(Get-RunningClaudeMainProcesses).Count -gt 0) {
+                Write-Warn "Could not close the running instance -- quit manually (tray -> Quit) and click the shortcut again."
+                return
+            }
+            Start-Sleep -Seconds 1   # let the single-instance lock release
         }
 
         Update-RepoQuietly
@@ -450,12 +478,28 @@ namespace ClaudeRtl {
 '@ -ErrorAction SilentlyContinue
 }
 
+# Claude 1.26832+ wraps window titles in Unicode bidi control marks
+# (U+202A "Claude" U+202C -- measured live), which silently breaks exact
+# and prefix title matching. Strip them before ANY comparison; activation
+# still uses the EXACT (marked) title string.
+function Strip-BidiMarks([string]$s) {
+    if ($null -eq $s) { return '' }
+    # LRM/RLM, LRE..RLO+PDF, LRI..PDI (the .NET regex engine parses \uXXXX)
+    return ($s -replace '[‎‏‪-‮⁦-⁩]', '')
+}
+
+function Find-ClaudeMainTitle {
+    [ClaudeRtl.WinEnum]::Titles() |
+        Where-Object { (Strip-BidiMarks $_) -eq 'Claude' } |
+        Select-Object -First 1
+}
+
 function Find-DevToolsWindow {
     param([int]$TimeoutSec)
     $deadline = (Get-Date).AddSeconds($TimeoutSec)
     while ($true) {
         $t = [ClaudeRtl.WinEnum]::Titles() |
-            Where-Object { $_ -like $DevToolsTitlePattern } |
+            Where-Object { (Strip-BidiMarks $_) -like $DevToolsTitlePattern } |
             Select-Object -First 1
         if ($t) { return $t }
         if ((Get-Date) -ge $deadline) { return $null }
@@ -501,7 +545,8 @@ function Invoke-InjectMode {
     # switch we did for the chords would otherwise silently leave them
     # typing English in the chat.
     $shell2 = New-Object -ComObject WScript.Shell
-    if ($shell2.AppActivate('Claude')) {
+    $mainT = Find-ClaudeMainTitle
+    if ($mainT -and $shell2.AppActivate($mainT)) {
         Start-Sleep -Milliseconds 400
         $fg = [ClaudeRtlI.Win32]::GetForegroundWindow()
         # Post the user's DEFAULT layout (first in their list) back.
@@ -566,6 +611,9 @@ public struct RECT { public int Left; public int Top; public int Right; public i
     # its input language to en-US. Returns $true when safe to type.
     # AppActivate alone loses to Windows' foreground lock when the user is
     # actively working in another app; SwitchToThisWindow is the fallback.
+    # $Title must be the EXACT window title (bidi marks included) as
+    # returned by the finders; $Pattern is matched against the STRIPPED
+    # foreground title.
     function Set-TypingTarget([string]$Title, [string]$Pattern) {
         # Up to 3 activate+verify rounds: window transitions can transiently
         # report an EMPTY foreground title right after a window opens
@@ -577,7 +625,7 @@ public struct RECT { public int Left; public int Top; public int Right; public i
             $fg = [ClaudeRtl.Win32]::GetForegroundWindow()
             $sb = New-Object System.Text.StringBuilder 512
             [void][ClaudeRtl.Win32]::GetWindowText($fg, $sb, 512)
-            if ($sb.ToString() -like $Pattern) { break }
+            if ((Strip-BidiMarks $sb.ToString()) -like $Pattern) { break }
             $h = [ClaudeRtl.Win32]::FindWindow($null, $Title)
             if ($h -ne [IntPtr]::Zero) {
                 [ClaudeRtl.Win32]::SwitchToThisWindow($h, $true)
@@ -586,7 +634,7 @@ public struct RECT { public int Left; public int Top; public int Right; public i
                 $sb = New-Object System.Text.StringBuilder 512
                 [void][ClaudeRtl.Win32]::GetWindowText($fg, $sb, 512)
             }
-            if ($sb.ToString() -like $Pattern) { break }
+            if ((Strip-BidiMarks $sb.ToString()) -like $Pattern) { break }
             if ($round -eq 3) {
                 Write-Warn "Foreground window is '$($sb.ToString())', expected '$Pattern' -- not typing."
                 return $false
@@ -606,8 +654,7 @@ public struct RECT { public int Left; public int Top; public int Right; public i
         $main = $null
         while ((Get-Date) -lt $mainDeadline) {
             Start-Sleep -Milliseconds 500
-            $main = Get-Process -Name 'Claude' -ErrorAction SilentlyContinue |
-                Where-Object { $_.MainWindowTitle -eq 'Claude' } | Select-Object -First 1
+            $main = Find-ClaudeMainTitle
             if ($main) { break }
         }
         if (-not $main) {
@@ -663,7 +710,8 @@ public struct RECT { public int Left; public int Top; public int Right; public i
         }
         $attempt++
         if (-not $Immediate) { Start-Sleep -Seconds 2 }   # let the app settle
-        if (-not (Set-TypingTarget 'Claude' 'Claude*')) {
+        $mainTitle = Find-ClaudeMainTitle
+        if (-not $mainTitle -or -not (Set-TypingTarget $mainTitle 'Claude*')) {
             Write-Warn "Could not safely focus the Claude window -- paste manually (snippet is on the clipboard)."
             return
         }
