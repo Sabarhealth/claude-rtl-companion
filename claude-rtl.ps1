@@ -514,10 +514,12 @@ function Invoke-LaunchLtrMode {
         Copy-SnippetToClipboard
         Write-Info "Launching Claude with LTR window chrome:"
         Write-Host "  `"$($info.Exe)`" --lang=en-US --force-ui-direction=ltr --inspect=$InspectorPort"
-        # --inspect opens the main-process inspector from launch, so the CDP
-        # injector needs no menu automation at all. Electron builds that
-        # refuse the flag simply leave the port closed and we fall back to
-        # driving the Developer menu.
+        # --inspect would open the main-process inspector from launch, but
+        # 1.30096 ignores it (verified: flag accepted, port never listens --
+        # the Electron node-cli-inspect fuse is off, same as the old
+        # --remote-debugging-port finding). Kept because it costs nothing and
+        # future builds may honor it; the Developer-menu fallback is what
+        # actually opens the inspector today.
         Start-Process -FilePath $info.Exe -ArgumentList '--lang=en-US', '--force-ui-direction=ltr', "--inspect=$InspectorPort"
         Write-Ok "Launched. Window controls should now be on the RIGHT (unmirrored)."
 
@@ -584,6 +586,62 @@ function Find-ClaudeMainTitle {
     [ClaudeRtl.WinEnum]::Titles() |
         Where-Object { (Strip-BidiMarks $_) -eq 'Claude' } |
         Select-Object -First 1
+}
+
+# Win32 helpers shared by every automation path (script scope on purpose:
+# these used to live inside Invoke-AutoInject, which made them invisible to
+# other callers and broke the debugger-menu fallback at runtime).
+Add-Type -Namespace ClaudeRtl -Name Win32 -MemberDefinition @'
+[StructLayout(LayoutKind.Sequential)]
+public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+[DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder text, int count);
+[DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern IntPtr LoadKeyboardLayout(string pwszKLID, uint Flags);
+[DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+[DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern IntPtr FindWindow(string cls, string title);
+[DllImport("user32.dll")] public static extern void SwitchToThisWindow(IntPtr hWnd, bool altTab);
+[DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+[DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+[DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, System.UIntPtr extra);
+'@ -ErrorAction SilentlyContinue
+
+# Focus a window by its EXACT title (bidi marks included), verify it really
+# became foreground, then switch its input language to en-US so synthetic
+# keystrokes are not re-mapped by a Hebrew layout. $Pattern is matched
+# against the STRIPPED foreground title. Returns $true when safe to type.
+function Set-TypingTarget([string]$Title, [string]$Pattern) {
+    $sh = New-Object -ComObject WScript.Shell
+    # Up to 3 activate+verify rounds: window transitions can transiently
+    # report an EMPTY foreground title right after a window opens, and
+    # AppActivate alone loses to the foreground lock when the user is
+    # actively working in another app.
+    $fg = [IntPtr]::Zero
+    for ($round = 1; $round -le 3; $round++) {
+        $null = $sh.AppActivate($Title)
+        Start-Sleep -Milliseconds 700
+        $fg = [ClaudeRtl.Win32]::GetForegroundWindow()
+        $sb = New-Object System.Text.StringBuilder 512
+        [void][ClaudeRtl.Win32]::GetWindowText($fg, $sb, 512)
+        if ((Strip-BidiMarks $sb.ToString()) -like $Pattern) { break }
+        $h = [ClaudeRtl.Win32]::FindWindow($null, $Title)
+        if ($h -ne [IntPtr]::Zero) {
+            [ClaudeRtl.Win32]::SwitchToThisWindow($h, $true)
+            Start-Sleep -Milliseconds 700
+            $fg = [ClaudeRtl.Win32]::GetForegroundWindow()
+            $sb = New-Object System.Text.StringBuilder 512
+            [void][ClaudeRtl.Win32]::GetWindowText($fg, $sb, 512)
+        }
+        if ((Strip-BidiMarks $sb.ToString()) -like $Pattern) { break }
+        if ($round -eq 3) {
+            Write-Warn "Foreground window is '$($sb.ToString())', expected '$Pattern' -- not typing."
+            return $false
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    $hkl = [ClaudeRtl.Win32]::LoadKeyboardLayout('00000409', 1)  # KLF_ACTIVATE
+    [void][ClaudeRtl.Win32]::PostMessage($fg, 0x0050, [IntPtr]::Zero, $hkl)  # WM_INPUTLANGCHANGEREQUEST
+    Start-Sleep -Milliseconds 300
+    return $true
 }
 
 function Find-DevToolsWindow {
@@ -673,20 +731,6 @@ function Invoke-AutoInject {
     # any window we switch its input language to en-US via
     # WM_INPUTLANGCHANGEREQUEST -- per-window, the desktop keeps its layout.
     # Every bail-out leaves the snippet on the clipboard for manual paste.
-    Add-Type -Namespace ClaudeRtl -Name Win32 -MemberDefinition @'
-[StructLayout(LayoutKind.Sequential)]
-public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
-[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-[DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder text, int count);
-[DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern IntPtr LoadKeyboardLayout(string pwszKLID, uint Flags);
-[DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
-[DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern IntPtr FindWindow(string cls, string title);
-[DllImport("user32.dll")] public static extern void SwitchToThisWindow(IntPtr hWnd, bool altTab);
-[DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
-[DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
-[DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, System.UIntPtr extra);
-'@ -ErrorAction SilentlyContinue
-
     $shell = New-Object -ComObject WScript.Shell
 
     # Left-click at a fractional position inside the FOREGROUND window.
@@ -705,45 +749,6 @@ public struct RECT { public int Left; public int Top; public int Right; public i
         Start-Sleep -Milliseconds 300
     }
 
-    # Focus a window by title, verify it really is foreground, then switch
-    # its input language to en-US. Returns $true when safe to type.
-    # AppActivate alone loses to Windows' foreground lock when the user is
-    # actively working in another app; SwitchToThisWindow is the fallback.
-    # $Title must be the EXACT window title (bidi marks included) as
-    # returned by the finders; $Pattern is matched against the STRIPPED
-    # foreground title.
-    function Set-TypingTarget([string]$Title, [string]$Pattern) {
-        # Up to 3 activate+verify rounds: window transitions can transiently
-        # report an EMPTY foreground title right after a window opens
-        # (observed live), and a single-shot check bailed on it.
-        $fg = [IntPtr]::Zero
-        for ($round = 1; $round -le 3; $round++) {
-            $null = $shell.AppActivate($Title)
-            Start-Sleep -Milliseconds 700
-            $fg = [ClaudeRtl.Win32]::GetForegroundWindow()
-            $sb = New-Object System.Text.StringBuilder 512
-            [void][ClaudeRtl.Win32]::GetWindowText($fg, $sb, 512)
-            if ((Strip-BidiMarks $sb.ToString()) -like $Pattern) { break }
-            $h = [ClaudeRtl.Win32]::FindWindow($null, $Title)
-            if ($h -ne [IntPtr]::Zero) {
-                [ClaudeRtl.Win32]::SwitchToThisWindow($h, $true)
-                Start-Sleep -Milliseconds 700
-                $fg = [ClaudeRtl.Win32]::GetForegroundWindow()
-                $sb = New-Object System.Text.StringBuilder 512
-                [void][ClaudeRtl.Win32]::GetWindowText($fg, $sb, 512)
-            }
-            if ((Strip-BidiMarks $sb.ToString()) -like $Pattern) { break }
-            if ($round -eq 3) {
-                Write-Warn "Foreground window is '$($sb.ToString())', expected '$Pattern' -- not typing."
-                return $false
-            }
-            Start-Sleep -Milliseconds 500
-        }
-        $hkl = [ClaudeRtl.Win32]::LoadKeyboardLayout('00000409', 1)  # KLF_ACTIVATE
-        [void][ClaudeRtl.Win32]::PostMessage($fg, 0x0050, [IntPtr]::Zero, $hkl)  # WM_INPUTLANGCHANGEREQUEST
-        Start-Sleep -Milliseconds 300
-        return $true
-    }
 
     # -- Step 1: get a DevTools window on screen ----------------------------
     if (-not $Immediate) {
