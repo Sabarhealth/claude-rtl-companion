@@ -243,35 +243,49 @@ function Test-InspectorPort {
 
 function Enable-MainProcessDebugger {
     # Drive the shipped menu item: hamburger -> Developer -> Enable Main
-    # Process Debugger. Keyboard type-ahead ('e' cycles Extensions ->
-    # Enable Main Process Debugger) avoids pixel coordinates.
-    Add-Type -Namespace ClaudeRtlM -Name Win32 -MemberDefinition @'
-[DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
-[DllImport("user32.dll")] public static extern void mouse_event(uint f, uint x, uint y, uint d, System.UIntPtr e);
-'@ -ErrorAction SilentlyContinue
-
+    # Process Debugger. Electron ignores --inspect on this build (fuse off,
+    # verified live) and Node's process._debugProcess() cannot attach to the
+    # Electron main process either, so this menu is the only way in.
+    #
+    # Two navigation strategies, each verified by polling the inspector port:
+    #   1. type-ahead: 'e' cycles Extensions -> Enable Main Process Debugger
+    #   2. positional: End, then Up x3 (the item sits 4th from the bottom)
+    # Menus differ between builds; trying both costs a second and makes this
+    # survive item reordering.
     $mainTitle = Find-ClaudeMainTitle
     if (-not $mainTitle) { return $false }
     $shellM = New-Object -ComObject WScript.Shell
-    if (-not (Set-TypingTarget $mainTitle 'Claude*')) { return $false }
 
-    # The hamburger sits at the top-left of the client area.
-    [void][ClaudeRtlM.Win32]::SetCursorPos(34, 15)
-    Start-Sleep -Milliseconds 250
-    [ClaudeRtlM.Win32]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
-    [ClaudeRtlM.Win32]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
-    Start-Sleep -Milliseconds 1000
-    $shellM.SendKeys('d')          # Developer
-    Start-Sleep -Milliseconds 700
-    $shellM.SendKeys('{RIGHT}')    # open submenu
-    Start-Sleep -Milliseconds 900
-    $shellM.SendKeys('e')          # Extensions
-    Start-Sleep -Milliseconds 400
-    $shellM.SendKeys('e')          # Enable Main Process Debugger
-    Start-Sleep -Milliseconds 400
-    $shellM.SendKeys('{ENTER}')
-    Start-Sleep -Seconds 3
-    return (Test-InspectorPort)
+    foreach ($strategy in @('typeahead', 'positional')) {
+        if (-not (Set-TypingTarget $mainTitle 'Claude*')) { return $false }
+        # The hamburger sits at the top-left of the client area.
+        [void][ClaudeRtl.Win32]::SetCursorPos(34, 15)
+        Start-Sleep -Milliseconds 250
+        [ClaudeRtl.Win32]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
+        [ClaudeRtl.Win32]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 1000
+        $shellM.SendKeys('d')          # Developer
+        Start-Sleep -Milliseconds 700
+        $shellM.SendKeys('{RIGHT}')    # open submenu
+        Start-Sleep -Milliseconds 900
+        if ($strategy -eq 'typeahead') {
+            $shellM.SendKeys('e'); Start-Sleep -Milliseconds 400   # Extensions
+            $shellM.SendKeys('e'); Start-Sleep -Milliseconds 400   # Enable Main Process Debugger
+        } else {
+            $shellM.SendKeys('{END}'); Start-Sleep -Milliseconds 400
+            $shellM.SendKeys('{UP}{UP}{UP}'); Start-Sleep -Milliseconds 400
+        }
+        $shellM.SendKeys('{ENTER}')
+        Start-Sleep -Seconds 3
+        if (Test-InspectorPort) {
+            Write-Info "Main process debugger enabled ($strategy)."
+            return $true
+        }
+        Write-Info "Debugger not up after '$strategy' attempt."
+        $shellM.SendKeys('{ESC}'); Start-Sleep -Milliseconds 400   # close any stray menu
+        $shellM.SendKeys('{ESC}'); Start-Sleep -Milliseconds 400
+    }
+    return $false
 }
 
 function Invoke-CdpInject {
@@ -531,6 +545,7 @@ function Invoke-LaunchLtrMode {
             Write-Info "CDP injection unavailable; falling back to DevTools automation."
             Invoke-AutoInject
         }
+        Restore-TypingLayout
     } finally {
         try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch {}
     }
@@ -603,7 +618,14 @@ public struct RECT { public int Left; public int Top; public int Right; public i
 [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
 [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
 [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, System.UIntPtr extra);
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr pid);
+[DllImport("user32.dll")] public static extern IntPtr GetKeyboardLayout(uint idThread);
 '@ -ErrorAction SilentlyContinue
+
+# The user's own input language, captured before we force en-US for the
+# synthetic keystrokes. Restored by Restore-TypingLayout when we are done --
+# otherwise the user is silently left typing English in a Hebrew chat.
+$script:SavedHkl = [IntPtr]::Zero
 
 # Focus a window by its EXACT title (bidi marks included), verify it really
 # became foreground, then switch its input language to en-US so synthetic
@@ -638,10 +660,30 @@ function Set-TypingTarget([string]$Title, [string]$Pattern) {
         }
         Start-Sleep -Milliseconds 500
     }
+    # Remember the window's CURRENT layout before forcing en-US, so it can be
+    # restored afterwards. Only the first capture counts -- later calls would
+    # otherwise "save" the en-US we just set.
+    if ($script:SavedHkl -eq [IntPtr]::Zero) {
+        $tid = [ClaudeRtl.Win32]::GetWindowThreadProcessId($fg, [IntPtr]::Zero)
+        $script:SavedHkl = [ClaudeRtl.Win32]::GetKeyboardLayout($tid)
+    }
     $hkl = [ClaudeRtl.Win32]::LoadKeyboardLayout('00000409', 1)  # KLF_ACTIVATE
     [void][ClaudeRtl.Win32]::PostMessage($fg, 0x0050, [IntPtr]::Zero, $hkl)  # WM_INPUTLANGCHANGEREQUEST
     Start-Sleep -Milliseconds 300
     return $true
+}
+
+function Restore-TypingLayout {
+    # Put the user's original input language back on the main window.
+    if ($script:SavedHkl -eq [IntPtr]::Zero) { return }
+    $mainTitle = Find-ClaudeMainTitle
+    if (-not $mainTitle) { return }
+    $sh = New-Object -ComObject WScript.Shell
+    if (-not $sh.AppActivate($mainTitle)) { return }
+    Start-Sleep -Milliseconds 400
+    $fg = [ClaudeRtl.Win32]::GetForegroundWindow()
+    [void][ClaudeRtl.Win32]::PostMessage($fg, 0x0050, [IntPtr]::Zero, $script:SavedHkl)
+    $script:SavedHkl = [IntPtr]::Zero
 }
 
 function Find-DevToolsWindow {
@@ -666,13 +708,6 @@ function Invoke-InjectMode {
     # (pinned shortcut / Ctrl+Alt+R hotkey); we open DevTools for that
     # session, run the saved snippet, close DevTools, restore the
     # user's keyboard layout.
-    Add-Type -Namespace ClaudeRtlI -Name Win32 -MemberDefinition @'
-[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr pid);
-[DllImport("user32.dll")] public static extern IntPtr GetKeyboardLayout(uint thread);
-[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-[DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
-'@ -ErrorAction SilentlyContinue
-
     $log = Join-Path $env:TEMP 'claude-rtl-launch.log'
     try { Start-Transcript -Path $log -Append -ErrorAction SilentlyContinue | Out-Null } catch {}
     try {
@@ -697,19 +732,10 @@ function Invoke-InjectMode {
         try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch {}
     }
 
-    # Restore the user's keyboard layout on the MAIN window -- the en-US
-    # switch we did for the chords would otherwise silently leave them
-    # typing English in the chat.
-    $shell2 = New-Object -ComObject WScript.Shell
-    $mainT = Find-ClaudeMainTitle
-    if ($mainT -and $shell2.AppActivate($mainT)) {
-        Start-Sleep -Milliseconds 400
-        $fg = [ClaudeRtlI.Win32]::GetForegroundWindow()
-        # Post the user's DEFAULT layout (first in their list) back.
-        $tid = [ClaudeRtlI.Win32]::GetWindowThreadProcessId($fg, [IntPtr]::Zero)
-        $cur = [ClaudeRtlI.Win32]::GetKeyboardLayout(0)  # calling thread's = user default-ish
-        [void][ClaudeRtlI.Win32]::PostMessage($fg, 0x0050, [IntPtr]::Zero, $cur)
-    }
+    # Put the user's own input language back (the earlier version restored
+    # GetKeyboardLayout(0) -- the PowerShell thread's layout, i.e. en-US --
+    # which is exactly how users ended up stuck typing English).
+    Restore-TypingLayout
 }
 
 function Invoke-AutoInject {
