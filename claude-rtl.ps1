@@ -241,6 +241,44 @@ function Test-InspectorPort {
     } catch { return $false }
 }
 
+function Invoke-NativeMenuItem {
+    # Find a popup-menu item BY NAME via UI Automation and invoke it.
+    # Electron's Menu.popup() produces a native Win32 menu (window class
+    # "#32768"), which UIA exposes as MenuItem elements -- so we can act on
+    # "Enable Main Process Debugger" itself instead of guessing at pixel
+    # coordinates or keystroke sequences that break when items are reordered.
+    param([string]$Name, [int]$TimeoutSec = 6)
+    Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes -ErrorAction SilentlyContinue
+    $root = [System.Windows.Automation.AutomationElement]::RootElement
+    $menuCond = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::ClassNameProperty, '#32768')
+    $nameCond = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::NameProperty, $Name)
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    while ((Get-Date) -lt $deadline) {
+        $menus = $root.FindAll([System.Windows.Automation.TreeScope]::Children, $menuCond)
+        foreach ($menu in $menus) {
+            $item = $menu.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $nameCond)
+            if ($item) {
+                # Submenu parents expose ExpandCollapse; leaf items expose Invoke.
+                try {
+                    $ec = $item.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+                    $ec.Expand(); return $true
+                } catch {}
+                try {
+                    $inv = $item.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+                    $inv.Invoke(); return $true
+                } catch {}
+                # Neither pattern: fall back to selecting it via keyboard focus.
+                try { $item.SetFocus(); (New-Object -ComObject WScript.Shell).SendKeys('{ENTER}'); return $true } catch {}
+            }
+        }
+        Start-Sleep -Milliseconds 300
+    }
+    return $false
+}
+
 function Enable-MainProcessDebugger {
     # Drive the shipped menu item: hamburger -> Developer -> Enable Main
     # Process Debugger. Electron ignores --inspect on this build (fuse off,
@@ -256,7 +294,7 @@ function Enable-MainProcessDebugger {
     if (-not $mainTitle) { return $false }
     $shellM = New-Object -ComObject WScript.Shell
 
-    foreach ($strategy in @('typeahead', 'positional')) {
+    foreach ($strategy in @('uia', 'typeahead', 'positional')) {
         if (-not (Set-TypingTarget $mainTitle 'Claude*')) { return $false }
         # The hamburger sits at the top-left of the client area.
         [void][ClaudeRtl.Win32]::SetCursorPos(34, 15)
@@ -264,6 +302,25 @@ function Enable-MainProcessDebugger {
         [ClaudeRtl.Win32]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
         [ClaudeRtl.Win32]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
         Start-Sleep -Milliseconds 1000
+        if ($strategy -eq 'uia') {
+            # Act on the menu items by name -- no keystrokes at all.
+            if (-not (Invoke-NativeMenuItem 'Developer')) {
+                Write-Info "UIA: 'Developer' menu item not found."
+                $shellM.SendKeys('{ESC}'); Start-Sleep -Milliseconds 500
+                continue
+            }
+            Start-Sleep -Milliseconds 800
+            if (-not (Invoke-NativeMenuItem 'Enable Main Process Debugger')) {
+                Write-Info "UIA: 'Enable Main Process Debugger' not found."
+                $shellM.SendKeys('{ESC}'); Start-Sleep -Milliseconds 400
+                $shellM.SendKeys('{ESC}'); Start-Sleep -Milliseconds 400
+                continue
+            }
+            Start-Sleep -Seconds 3
+            if (Test-InspectorPort) { Write-Info "Main process debugger enabled (uia)."; return $true }
+            Write-Info "Debugger not up after 'uia' attempt."
+            continue
+        }
         $shellM.SendKeys('d')          # Developer
         Start-Sleep -Milliseconds 700
         $shellM.SendKeys('{RIGHT}')    # open submenu
