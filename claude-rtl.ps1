@@ -223,6 +223,72 @@ function Set-ClaudeDevToolsEnv {
 # ============================================================================
 # Snippet (clipboard)
 # ============================================================================
+# ============================================================================
+# CDP injection (Claude 1.30096+)
+# ============================================================================
+# From 1.30096 the app shell is a local Vite renderer and the chat lives in a
+# WebContentsView that no accelerator or menu item can attach DevTools to, so
+# the DevTools UI-automation path cannot reach it. Instead we talk to
+# Electron's main-process inspector and inject into every webContents
+# programmatically -- no keystrokes, no focus stealing. See
+# scripts/cdp-inject.ps1 for the protocol details.
+$InspectorPort = 9229
+
+function Test-InspectorPort {
+    try {
+        $null = Invoke-RestMethod -Uri "http://127.0.0.1:$InspectorPort/json/list" -TimeoutSec 3
+        return $true
+    } catch { return $false }
+}
+
+function Enable-MainProcessDebugger {
+    # Drive the shipped menu item: hamburger -> Developer -> Enable Main
+    # Process Debugger. Keyboard type-ahead ('e' cycles Extensions ->
+    # Enable Main Process Debugger) avoids pixel coordinates.
+    Add-Type -Namespace ClaudeRtlM -Name Win32 -MemberDefinition @'
+[DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+[DllImport("user32.dll")] public static extern void mouse_event(uint f, uint x, uint y, uint d, System.UIntPtr e);
+'@ -ErrorAction SilentlyContinue
+
+    $mainTitle = Find-ClaudeMainTitle
+    if (-not $mainTitle) { return $false }
+    $shellM = New-Object -ComObject WScript.Shell
+    if (-not (Set-TypingTarget $mainTitle 'Claude*')) { return $false }
+
+    # The hamburger sits at the top-left of the client area.
+    [void][ClaudeRtlM.Win32]::SetCursorPos(34, 15)
+    Start-Sleep -Milliseconds 250
+    [ClaudeRtlM.Win32]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
+    [ClaudeRtlM.Win32]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 1000
+    $shellM.SendKeys('d')          # Developer
+    Start-Sleep -Milliseconds 700
+    $shellM.SendKeys('{RIGHT}')    # open submenu
+    Start-Sleep -Milliseconds 900
+    $shellM.SendKeys('e')          # Extensions
+    Start-Sleep -Milliseconds 400
+    $shellM.SendKeys('e')          # Enable Main Process Debugger
+    Start-Sleep -Milliseconds 400
+    $shellM.SendKeys('{ENTER}')
+    Start-Sleep -Seconds 3
+    return (Test-InspectorPort)
+}
+
+function Invoke-CdpInject {
+    $cdp = Join-Path $scriptDir 'scripts\cdp-inject.ps1'
+    if (-not (Test-Path $cdp)) { Write-Warn "cdp-inject.ps1 not found."; return $false }
+    if (-not (Test-InspectorPort)) {
+        Write-Info "Main-process inspector not listening; enabling it via the Developer menu."
+        if (-not (Enable-MainProcessDebugger)) {
+            Write-Warn "Could not enable the main process debugger."
+            Write-Info "Enable it manually once per app run: hamburger -> Developer -> Enable Main Process Debugger."
+            return $false
+        }
+    }
+    & $cdp -SnippetPath $SnippetPath -Port $InspectorPort
+    return ($LASTEXITCODE -eq 0)
+}
+
 function Update-RepoQuietly {
     # Self-update: fast-forward pull of this repo so every install runs the
     # latest launcher + snippet without anyone remembering to git pull.
@@ -447,11 +513,22 @@ function Invoke-LaunchLtrMode {
         Update-RepoQuietly
         Copy-SnippetToClipboard
         Write-Info "Launching Claude with LTR window chrome:"
-        Write-Host "  `"$($info.Exe)`" --lang=en-US --force-ui-direction=ltr"
-        Start-Process -FilePath $info.Exe -ArgumentList '--lang=en-US', '--force-ui-direction=ltr'
+        Write-Host "  `"$($info.Exe)`" --lang=en-US --force-ui-direction=ltr --inspect=$InspectorPort"
+        # --inspect opens the main-process inspector from launch, so the CDP
+        # injector needs no menu automation at all. Electron builds that
+        # refuse the flag simply leave the port closed and we fall back to
+        # driving the Developer menu.
+        Start-Process -FilePath $info.Exe -ArgumentList '--lang=en-US', '--force-ui-direction=ltr', "--inspect=$InspectorPort"
         Write-Ok "Launched. Window controls should now be on the RIGHT (unmirrored)."
-        Write-Info "Snippet is on the clipboard: DevTools Console -> Ctrl+V -> Enter."
-        Invoke-AutoInject
+
+        # Wait for the app window, then inject everywhere via CDP.
+        $dl = (Get-Date).AddSeconds(60)
+        while ((Get-Date) -lt $dl -and -not (Find-ClaudeMainTitle)) { Start-Sleep -Milliseconds 700 }
+        Start-Sleep -Seconds 4   # let the session view finish loading
+        if (-not (Invoke-CdpInject)) {
+            Write-Info "CDP injection unavailable; falling back to DevTools automation."
+            Invoke-AutoInject
+        }
     } finally {
         try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch {}
     }
@@ -551,7 +628,13 @@ function Invoke-InjectMode {
         # saved DevTools snippet is refreshed from the repo on every inject).
         Update-RepoQuietly
         Copy-SnippetToClipboard
-        Invoke-AutoInject -Immediate
+        # CDP first: it reaches every view (including ones DevTools cannot
+        # attach to on 1.30096+) and needs no focus. UI automation is the
+        # fallback for older builds where the inspector is unavailable.
+        if (-not (Invoke-CdpInject)) {
+            Write-Info "CDP injection unavailable; falling back to DevTools automation."
+            Invoke-AutoInject -Immediate
+        }
     } finally {
         try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch {}
     }

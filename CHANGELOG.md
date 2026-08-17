@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### NEW injection architecture: main-process inspector (CDP) -- 1.30096+
+- Claude 1.30096 rebuilt the app shell as a LOCAL Vite renderer
+  (`app.asar/.vite/renderer/main_window/index.html`, verified by
+  extracting the bundle) that only draws the title bar and the
+  connection-error overlay. The chat still lives at
+  `claude.ai/epitaxy/local_*`, but in a WebContentsView that
+  `Ctrl+Alt+I` (accelerator dead in the popup menu) and even
+  "Show All Dev Tools" cannot attach DevTools to -- the whole
+  UI-automation approach is unreachable on this version.
+- New `scripts/cdp-inject.ps1` replaces it: it connects to Electron's
+  main-process inspector -- a shipped feature (Developer -> Enable Main
+  Process Debugger; the launcher now also passes `--inspect=9229` so
+  it is open from launch) -- enumerates every webContents and injects
+  the snippet into each via `webContents.debugger` +
+  `Runtime.evaluate`. That is the same channel the DevTools console
+  uses, so unlike `webContents.executeJavaScript()` it is not blocked
+  by the renderers' CSP.
+- Verified live on 1.30096.5.0: shell, chat session (268 elements
+  tagged) and both preview panes injected in a single call, with zero
+  keystrokes, focus stealing, window hunting or title matching -- the
+  three things every previous Claude update broke.
+- `LaunchLtr` and `Inject` now try CDP first and fall back to the old
+  DevTools automation, so older builds keep working unchanged.
+- Implementation note: build the payload with
+  `[System.IO.File]::ReadAllText` + `ConvertTo-Json -InputObject`.
+  `Get-Content` decorates its string with PS note-properties and
+  `ConvertTo-Json` then serializes the whole object, which the debugger
+  rejects as "Invalid parameters".
+
 ### Launcher: survive Claude 1.30096 -- developer_settings.json + docked DevTools
 - Claude 1.30096 moved the dev-tools permission out of `config.json`
   into a dedicated `%APPDATA%\Claude\developer_settings.json`
