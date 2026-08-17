@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Launcher: survive Claude 1.30096 -- developer_settings.json + docked DevTools
+- Claude 1.30096 moved the dev-tools permission out of `config.json`
+  into a dedicated `%APPDATA%\Claude\developer_settings.json`
+  (`{"allowDevTools": true}`) -- found by reading the app bundle: the
+  new gate parses only that file. `Set-AllowDevTools` now writes BOTH
+  files (BOM-less: Node's `JSON.parse` rejects a BOM and the app then
+  silently acts as if dev tools are disabled).
+- The Ctrl+Alt+I accelerator survives (verified in the bundle,
+  `CommandOrControl+Alt+I`), but DevTools can now open DOCKED inside
+  the main window -- no separate top-level window, so the window-based
+  finder saw nothing and inject died with "No DevTools window
+  appeared". New fallback: when no window appears after the chord,
+  assume docked (focus is inside DevTools), drive the Command Menu to
+  `undock`, and wait again. DevTools persists the dock state per
+  profile, so the fix is one-time and self-healing.
+- The detached window title changed AGAIN (bare `Developer Tools`, no
+  URL suffix, observed in a successful morning run) -- already matched
+  by the existing `*Developer Tools*` pattern; noted for the record.
+- The auto-restart of flagless instances (previous entry) was observed
+  working in production during this update cycle.
+
 ### Launcher: survive Claude 1.26832 -- bidi-marked titles; auto-restart
 - Claude 1.26832 wraps window titles in Unicode bidi control marks
   (U+202A "Claude" U+202C -- measured codepoint-by-codepoint), which

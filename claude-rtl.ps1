@@ -169,6 +169,21 @@ function Set-AllowDevTools {
     $tmp = "$ConfigPath.tmp"
     [System.IO.File]::WriteAllText($tmp, $newJson, (New-Object System.Text.UTF8Encoding $false))
     Move-Item -LiteralPath $tmp -Destination $ConfigPath -Force
+
+    # Claude 1.30096+ moved the flag to its own file, developer_settings.json
+    # (config.json's allowDevTools is ignored there). Write BOTH so every
+    # version is covered. Must be BOM-less: Node's JSON.parse rejects a BOM
+    # and the app then silently treats dev tools as disabled.
+    $devSettings = Join-Path (Split-Path -Parent $ConfigPath) 'developer_settings.json'
+    if ($Enable) {
+        [System.IO.File]::WriteAllText($devSettings,
+            "{`n  `"allowDevTools`": true`n}",
+            (New-Object System.Text.UTF8Encoding $false))
+        Write-Info "developer_settings.json written (1.30096+ mechanism)."
+    } elseif (Test-Path $devSettings) {
+        Remove-Item -LiteralPath $devSettings -Force
+        Write-Info "developer_settings.json removed."
+    }
 }
 
 # ============================================================================
@@ -719,7 +734,22 @@ public struct RECT { public int Left; public int Top; public int Right; public i
             Click-InForeground 0.62 0.45   # focus the session view
         }
         $shell.SendKeys('^%i')   # Ctrl+Alt+I
-        $title = Find-DevToolsWindow -TimeoutSec 15
+        $title = Find-DevToolsWindow -TimeoutSec 8
+        if (-not $title) {
+            # Claude 1.30096+: the accelerator can open DevTools DOCKED
+            # inside the main window -- no separate top-level window exists,
+            # so the finder sees nothing. Focus is inside the docked
+            # DevTools right after the chord, so drive its Command Menu to
+            # undock into a separate window. DevTools remembers the dock
+            # state per profile, so this self-heals permanently.
+            Write-Info "No separate window -- assuming DOCKED DevTools; sending undock command."
+            $shell.SendKeys('^+p')     # DevTools Command Menu ('>' prefilled)
+            Start-Sleep -Milliseconds 600
+            $shell.SendKeys('undock')
+            Start-Sleep -Milliseconds 600
+            $shell.SendKeys('{ENTER}')
+            $title = Find-DevToolsWindow -TimeoutSec 8
+        }
         if (-not $title) {
             Write-Warn "No DevTools window appeared -- skipping auto-inject. Is allowDevTools enabled? (-Mode Setup)."
             return
