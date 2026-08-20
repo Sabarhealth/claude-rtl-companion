@@ -335,6 +335,18 @@ version.
 | Chat composer doesn't flip direction when typing Hebrew | Older snippet (≤ v11) without input coverage -- pull latest and re-copy |
 | `Set-Clipboard` not found in PowerShell | Very old PowerShell -- use `-Mode PrintSnippet` and copy by hand |
 
+## Upstream
+
+The real fix is native RTL support in the app. If you use this companion,
+please 👍 and follow the upstream issues so they get prioritized:
+
+- [anthropics/claude-code#79402](https://github.com/anthropics/claude-code/issues/79402)
+  -- RTL support + word-boundary wrapping (the canonical feature request;
+  currently labeled macOS, though everything here reproduces on Windows).
+- [anthropics/claude-code#87309](https://github.com/anthropics/claude-code/issues/87309)
+  -- RTL-mirrored window draws a duplicate "ghost" preview pane (open,
+  triaged as a bug with a repro).
+
 ## Contributing
 
 Bug reports and PRs welcome. If you find a Claude Desktop UI element
