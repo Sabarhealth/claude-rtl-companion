@@ -290,6 +290,34 @@ function Copy-SnippetToClipboard {
     Write-Ok "Snippet copied to clipboard ($([Math]::Round($snippet.Length / 1KB, 1)) KB)."
 }
 
+function Get-SnippetVersion {
+    # The snippet header carries its version: "... console snippet (v19)".
+    $head = (Get-Content $SnippetPath -TotalCount 5 -ErrorAction SilentlyContinue) -join "`n"
+    $m = [regex]::Match($head, 'snippet \((v\d+)\)')
+    if ($m.Success) { return $m.Groups[1].Value }
+    return 'unknown'
+}
+
+function Show-SnippetFreshness {
+    # The DevTools-saved copy of the snippet cannot be updated for you --
+    # doing that used to mean synthesizing keystrokes into the editor, which
+    # is exactly what was removed. So instead: track which version was last
+    # announced, and say clearly WHEN a re-paste is needed. The current
+    # snippet is already on the clipboard by the time this runs.
+    $ver = Get-SnippetVersion
+    $stamp = Join-Path $env:TEMP 'claude-rtl-snippet-version.txt'
+    $prev = if (Test-Path $stamp) { (Get-Content $stamp -Raw).Trim() } else { '' }
+    if ($ver -ne $prev) {
+        Write-Warn "Snippet updated: $prev -> $ver"
+        Write-Info "Your saved DevTools snippet is now out of date. To refresh it (once):"
+        Write-Info "  DevTools -> Sources -> Snippets -> Claude-RTL -> click the editor -> Ctrl+A, Ctrl+V, Ctrl+S"
+        Write-Info "  (the new version is already on your clipboard)"
+        try { Set-Content -Path $stamp -Value $ver -Encoding ascii } catch {}
+    } else {
+        Write-Info "Snippet $ver (unchanged; your saved DevTools copy is current)."
+    }
+}
+
 # ============================================================================
 # Modes
 # ============================================================================
@@ -487,6 +515,7 @@ function Invoke-LaunchLtrMode {
 
         Update-RepoQuietly
         Copy-SnippetToClipboard
+        Show-SnippetFreshness
         Write-Info "Launching Claude with LTR window chrome:"
         Write-Host "  `"$($info.Exe)`" --lang=en-US --force-ui-direction=ltr"
         # NO debugging switch is passed. Claude 1.34493+ REFUSES TO START if
@@ -576,8 +605,8 @@ function Invoke-InjectMode {
         }
 
         Update-RepoQuietly
-        # Clipboard copy is a convenience for the manual Console fallback.
         Copy-SnippetToClipboard
+        Show-SnippetFreshness
         [void](Invoke-CdpInject)
     } finally {
         try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch {}

@@ -115,9 +115,9 @@ Creates two Start Menu shortcuts: **"Claude (LTR)"** (pin it to the
 taskbar -- it is the app icon from now on) and **"Claude RTL Inject"**
 (global hotkey `Ctrl+Alt+R`).
 
-**Daily use:** launch Claude via the pinned "Claude (LTR)" icon, then
-once per run: hamburger -> Developer -> **Enable Main Process Debugger**,
-and press **`Ctrl+Alt+R`**. See *Per-session workflow* below.
+**Daily use:** launch Claude via the pinned "Claude (LTR)" icon (that is
+what gives you the unmirrored window), then apply the snippet once per run
+-- see *Per-session workflow* below for the two ways to do it.
 
 ## Upgrading from an older install (pre-launcher era)
 
@@ -184,28 +184,54 @@ the page is gone, and the next launch needs the snippet run again.
 that's exactly what we're not doing. Option A is the shortest safe
 re-run.
 
-### Option A -- one menu click, then a hotkey (recommended)
+### Option A -- DevTools on the session view (recommended, fewest clicks)
 
-Claude Desktop is several separate web documents: a shell, plus a
-`WebContentsView` per Claude Code session and one per preview pane.
-Injection goes through Electron's **main-process inspector**, which
-reaches all of them at once. **No synthetic clicks or keystrokes are used
-anywhere**, so nothing can steal focus or leak input into another app.
+Claude Desktop is several separate web documents: a shell (the title bar
+chrome) plus a `WebContentsView` per Claude Code session and per preview
+pane. **Which document DevTools attaches to matters**: the snippet only
+affects the chat if DevTools is attached to the *session* view.
 
-Once per Claude run:
+The reliable way to get that, verified on 1.34493:
 
-1. Launch Claude with the pinned **Claude (LTR)** shortcut (unmirrored
-   window).
-2. In Claude: hamburger menu -> Developer -> **Enable Main Process
-   Debugger**. Stays on until Claude exits.
-3. Press **`Ctrl+Alt+R`** -- safe from any window, injects every view.
+1. **Click inside the chat** (not the toolbar) so the session view has focus.
+2. Switch to an English keyboard layout (`Win+Space`) -- under a Hebrew
+   layout `Ctrl+Alt` is swallowed as AltGr.
+3. Press **`Ctrl+Alt+I`**.
 
-> Why step 2 cannot be automated: Claude 1.34493+ **refuses to start** if
-> the command line carries a debugging switch (`--remote-debugging-port`,
-> `--inspect`, ...) without a signed `CLAUDE_CDP_AUTH` token, and driving
-> the menu with simulated clicks/keystrokes is exactly the behaviour that
-> was removed for leaking input into other applications. One deliberate
-> click is the honest cost.
+Check the window title: it must read
+`Developer Tools - https://claude.ai/epitaxy/local_...`. If it reads
+`file:///...app.asar/...` you got the shell -- close it, click in the chat,
+and try again. (Opening DevTools from the hamburger menu *always* gives you
+the shell, because clicking the hamburger moves focus there.)
+
+Then, with the `Claude-RTL` snippet open in **Sources -> Snippets**, press
+**`Ctrl+Enter`** to run it. Leave that DevTools window open: for the rest of
+the session, re-applying is just `Ctrl+Enter`.
+
+**Keeping the snippet up to date.** The saved DevTools copy is not updated
+automatically -- doing that would require typing into the editor for you,
+which this tool no longer does. Instead, every launch/inject prints the
+snippet version and tells you when it changed:
+
+```
+[claude-rtl] Snippet updated: v19 -> v20
+[claude-rtl] Your saved DevTools snippet is now out of date. To refresh it (once):
+[claude-rtl]   DevTools -> Sources -> Snippets -> Claude-RTL -> click the editor -> Ctrl+A, Ctrl+V, Ctrl+S
+```
+
+The new version is already on your clipboard at that point, so refreshing is
+three keystrokes -- and only when the snippet actually changed.
+
+### Option A2 -- main-process inspector (covers every view at once)
+
+Useful when you have several sessions or preview panes open and want them
+all fixed in one go, without hunting for the right DevTools window:
+
+1. Hamburger menu -> Developer -> **Enable Main Process Debugger**
+   (stays on until Claude exits).
+2. Press **`Ctrl+Alt+R`** -- safe from any window; injects the shell, every
+   session and every preview pane, always straight from
+   `scripts/inject-snippet.js` (so it is never out of date).
 
 ### Option B -- DevTools Snippets, manual trigger (3 keystrokes per session)
 

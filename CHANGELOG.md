@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Confirmed: Ctrl+Alt+I DOES reach the session view (1.34493)
+- User test settled the open question: with focus **inside the chat** and
+  an English keyboard layout, `Ctrl+Alt+I` opens DevTools attached to
+  `claude.ai/epitaxy/local_<id>` -- the session document, not the shell.
+  Opening DevTools from the hamburger menu always yields the shell,
+  because clicking the hamburger moves focus to the title-bar renderer;
+  that is why running the snippet from there did nothing to the chat.
+- So the shortest per-run flow is the user's own suggestion: click in the
+  chat -> `Ctrl+Alt+I` -> `Ctrl+Enter` on the saved snippet, then leave
+  the window open and re-apply with a single `Ctrl+Enter`. Documented as
+  Option A; the main-process inspector remains as Option A2 for fixing
+  every view at once.
+
+### Snippet freshness is now reported instead of silently drifting
+- The saved DevTools snippet cannot be refreshed automatically any more
+  (that used to mean synthesizing keystrokes into the editor). Rather
+  than let it drift silently, `LaunchLtr`/`Inject` now parse the version
+  from the snippet header, compare it against the last announced one,
+  and print an explicit re-paste instruction only when it changed -- with
+  the new version already on the clipboard.
+
 ### Reverted: Claude 1.34493 REFUSES TO START with debugging switches
 - The previous entry's `--remote-debugging-port` approach was wrong and
   broke launching entirely: the shortcut ran, Claude started, and exited
