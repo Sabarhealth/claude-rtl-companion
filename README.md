@@ -112,11 +112,9 @@ Creates two Start Menu shortcuts: **"Claude (LTR)"** (pin it to the
 taskbar -- it is the app icon from now on) and **"Claude RTL Inject"**
 (global hotkey `Ctrl+Alt+R`).
 
-**Daily use:** launch Claude via the pinned "Claude (LTR)" icon (this
-gives you the unmirrored window). Then, once per Claude run: hamburger
-menu -> Developer -> **Enable Main Process Debugger**, and press
-**`Ctrl+Alt+R`**. See *Per-session workflow* below for why that one step
-is deliberately manual.
+**Daily use:** launch Claude via the pinned "Claude (LTR)" icon. It
+gives you the unmirrored window and applies RTL to every view by itself
+-- no further steps. `Ctrl+Alt+R` re-applies on demand.
 
 ## Upgrading from an older install (pre-launcher era)
 
@@ -182,34 +180,31 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 The injected CSS lives in the renderer process. When Claude is closed
 the page is gone, and the next launch needs the snippet run again.
 **There is no way to avoid this without modifying `app.asar`** -- and
-that's exactly what we're not doing. Option A is the fastest safe
-re-run: two clicks in Claude's own menu, then one hotkey.
+that's exactly what we're not doing. Option A makes the re-run automatic
+on every launch.
 
-### Option A -- Ctrl+Alt+R (recommended)
+### Option A -- nothing to do (recommended)
 
 Claude Desktop is several separate web documents: a shell, plus a
 `WebContentsView` per Claude Code session and one per preview pane. The
-tool reaches all of them at once through Electron's **main-process
-inspector** -- a local socket conversation, with **no synthetic clicks or
-keystrokes anywhere**, so it can never steal focus or leak input into
-another application.
+**Claude (LTR)** shortcut launches Claude with
+`--remote-debugging-port=9222`, which opens Chromium's DevTools Protocol
+endpoint for all of them, and the launcher injects through it a few
+seconds later. It also registers the snippet for future documents, so
+chats you open afterwards are covered too.
 
-Per Claude run, once:
+**No synthetic clicks or keystrokes are used anywhere**, so nothing can
+steal focus or leak input into another app.
 
-1. Launch Claude with the pinned **Claude (LTR)** shortcut.
-2. In Claude: **hamburger menu -> Developer -> Enable Main Process
-   Debugger** (two seconds; it stays enabled until Claude exits).
-3. Press **`Ctrl+Alt+R`** -- from anywhere, even while working in another
-   app. Every view gets the RTL fix.
+Day to day: launch Claude with the pinned **Claude (LTR)** icon. That's
+it. If you ever want to re-apply manually (or you started Claude some
+other way), press **`Ctrl+Alt+R`** -- safe from any window.
 
-Repeat step 3 whenever you want to re-apply it; it is idempotent.
-
-> Why step 2 is manual: the app ignores `--inspect` on the command line
-> (Electron's node-cli-inspect fuse is off) and `process._debugProcess()`
-> cannot attach to the Electron main process, so the menu is the only way
-> in. Earlier versions automated that menu with simulated clicks and
-> keystrokes -- and when focus moved at the wrong moment, those went to
-> whatever app was in front. That automation has been removed entirely.
+> Trade-off worth knowing: the app treats `--remote-debugging-port` as a
+> "dangerous switch" and disables **Claude-in-Chrome local pairing** for
+> that launch. Nothing else is affected. If you use the Chrome extension,
+> launch Claude normally and use the fallback channel instead: hamburger
+> menu -> Developer -> **Enable Main Process Debugger**, then `Ctrl+Alt+R`.
 
 ### Option B -- DevTools Snippets, manual trigger (3 keystrokes per session)
 

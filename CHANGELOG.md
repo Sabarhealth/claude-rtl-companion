@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Hands-free again -- via Chromium's DevTools Protocol port
+- Reading the 1.34493 bundle showed `--remote-debugging-port` is NOT
+  stripped: it appears in a "dangerous switches" list the app merely
+  *detects*, and the only consequence is that Claude-in-Chrome local
+  pairing is disabled for that launch ("[Chrome Extension MCP] local
+  pairing disabled for this launch"). Everything else works normally.
+- `LaunchLtr` therefore now launches with
+  `--remote-debugging-port=9222`, which opens a CDP endpoint for every
+  renderer from the moment Claude starts. New `scripts/cdp-renderer.ps1`
+  injects through it -- no Developer menu, no main-process inspector, no
+  clicks, no keystrokes.
+- It also calls `Page.addScriptToEvaluateOnNewDocument`, so the snippet
+  is re-applied automatically to future documents in each target
+  (navigations, newly opened chats) instead of needing another run.
+  `-Watch` additionally picks up views that appear later.
+- Injection order is now: renderer CDP (nothing to enable) -> main-process
+  inspector (needs the Developer menu) -> clear instructions. `--inspect`
+  is no longer passed; this build ignores it.
+- Net effect: back to zero manual steps per launch, while keeping the
+  no-synthetic-input guarantee from the previous entry.
+
 ### Removed ALL synthetic input -- the tool no longer touches your desktop
 - User report: the launcher "escapes Claude's boundaries, opens other
   things". Correct, and the root cause was structural: every UI-automation
