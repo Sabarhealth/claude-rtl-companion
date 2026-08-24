@@ -7,26 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Hands-free again -- via Chromium's DevTools Protocol port
-- Reading the 1.34493 bundle showed `--remote-debugging-port` is NOT
-  stripped: it appears in a "dangerous switches" list the app merely
-  *detects*, and the only consequence is that Claude-in-Chrome local
-  pairing is disabled for that launch ("[Chrome Extension MCP] local
-  pairing disabled for this launch"). Everything else works normally.
-- `LaunchLtr` therefore now launches with
-  `--remote-debugging-port=9222`, which opens a CDP endpoint for every
-  renderer from the moment Claude starts. New `scripts/cdp-renderer.ps1`
-  injects through it -- no Developer menu, no main-process inspector, no
-  clicks, no keystrokes.
-- It also calls `Page.addScriptToEvaluateOnNewDocument`, so the snippet
-  is re-applied automatically to future documents in each target
-  (navigations, newly opened chats) instead of needing another run.
-  `-Watch` additionally picks up views that appear later.
-- Injection order is now: renderer CDP (nothing to enable) -> main-process
-  inspector (needs the Developer menu) -> clear instructions. `--inspect`
-  is no longer passed; this build ignores it.
-- Net effect: back to zero manual steps per launch, while keeping the
-  no-synthetic-input guarantee from the previous entry.
+### Reverted: Claude 1.34493 REFUSES TO START with debugging switches
+- The previous entry's `--remote-debugging-port` approach was wrong and
+  broke launching entirely: the shortcut ran, Claude started, and exited
+  immediately. Root cause, straight from the bundle:
+
+  ```js
+  if (Zz(process.argv) && !iB()) {
+    fs.writeSync(2, 'Claude: refusing to start - a debugging or ' +
+                    'network-override switch is present on the command line.
+')
+    process.exit(1)
+  }
+  ```
+
+  `Zz` matches a blocklist (`remote-debugging-port`, `disable-web-security`,
+  `host-rules`, ...) and `iB()` is satisfied only by a `CLAUDE_CDP_AUTH`
+  token verified against an Anthropic Ed25519 public key. This is a
+  deliberate vendor hardening with a signed-token escape hatch we cannot
+  and should not forge -- so that channel is closed, permanently.
+  Reading the blocklist earlier as "merely detected" was a misreading:
+  the detection that only disables Claude-in-Chrome pairing is a
+  *different* call site than the one that exits.
+- `LaunchLtr` passes only `--lang=en-US --force-ui-direction=ltr` again
+  (neither is on the blocklist), and `scripts/cdp-renderer.ps1` is deleted.
+- Injection channel remains the shipped main-process inspector, enabled
+  once per Claude run from the Developer menu.
+
+### Removed the legacy CLAUDE_DEV_TOOLS=detach environment variable
+- User-reported: DevTools popped open on every launch, even when starting
+  Claude normally. That was this variable, set by `-Mode Setup` back when
+  injection meant pasting into the DevTools Console.
+- Nothing needs it now, so `Setup` clears it instead of setting it, and
+  the value has been removed from the affected machine.
 
 ### Removed ALL synthetic input -- the tool no longer touches your desktop
 - User report: the launcher "escapes Claude's boundaries, opens other

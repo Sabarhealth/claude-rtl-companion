@@ -21,7 +21,7 @@
 
 .PARAMETER Mode
     Status         (default) -- print state of dev mode and Claude.
-    Setup          -- one-shot: EnableDevMode + set CLAUDE_DEV_TOOLS env var +
+    Setup          -- one-shot: EnableDevMode + clear the legacy CLAUDE_DEV_TOOLS var +
                        broadcast env change to Explorer + copy snippet to
                        clipboard. Non-interactive; safe for automated installs.
     EnableDevMode  -- set allowDevTools=true in config.json (auto-backup).
@@ -233,7 +233,6 @@ function Set-ClaudeDevToolsEnv {
 # programmatically -- no keystrokes, no focus stealing. See
 # scripts/cdp-inject.ps1 for the protocol details.
 $InspectorPort = 9229   # Node/main-process inspector (Developer menu)
-$RemotePort    = 9222   # Chromium DevTools Protocol (--remote-debugging-port)
 
 function Test-InspectorPort {
     try {
@@ -242,27 +241,6 @@ function Test-InspectorPort {
     } catch { return $false }
 }
 
-
-function Test-RemotePort {
-    try {
-        $null = Invoke-RestMethod -Uri "http://127.0.0.1:$RemotePort/json/list" -TimeoutSec 3
-        return $true
-    } catch { return $false }
-}
-
-function Invoke-RendererInject {
-    # Preferred path: Chromium's DevTools Protocol endpoint, opened by
-    # --remote-debugging-port at launch. Needs no menu, no inspector and no
-    # input synthesis, and it registers the snippet for future documents too,
-    # so new chats are covered without re-running anything.
-    param([switch]$Quiet)
-    $cdp = Join-Path $scriptDir 'scripts\cdp-renderer.ps1'
-    if (-not (Test-Path $cdp)) { return $false }
-    if (-not (Test-RemotePort)) { return $false }
-    if ($Quiet) { & $cdp -SnippetPath $SnippetPath -Port $RemotePort -Quiet }
-    else { & $cdp -SnippetPath $SnippetPath -Port $RemotePort }
-    return ($LASTEXITCODE -eq 0)
-}
 
 function Invoke-CdpInject {
     # This tool NEVER synthesizes mouse clicks or keystrokes. Earlier versions
@@ -274,11 +252,9 @@ function Invoke-CdpInject {
     $cdp = Join-Path $scriptDir 'scripts\cdp-inject.ps1'
     if (-not (Test-Path $cdp)) { Write-Warn "cdp-inject.ps1 not found."; return $false }
     if (-not (Test-InspectorPort)) {
-        Write-Warn "No injection channel is open."
-        Write-Info "Normally there is nothing to do: launch Claude with the 'Claude (LTR)' shortcut and"
-        Write-Info "the DevTools Protocol port is open from the start (no menus, no keystrokes)."
-        Write-Info "If Claude was started some other way, either relaunch it with that shortcut, or"
-        Write-Info "enable the fallback channel once: hamburger -> Developer -> Enable Main Process Debugger."
+        Write-Warn "Main-process inspector is not open, so there is nothing to inject through."
+        Write-Info "Enable it ONCE per Claude run:  hamburger menu -> Developer -> Enable Main Process Debugger"
+        Write-Info "then press Ctrl+Alt+R. It stays open until Claude exits."
         return $false
     }
     & $cdp -SnippetPath $SnippetPath -Port $InspectorPort
@@ -382,8 +358,7 @@ function Invoke-EnableDevModeMode {
     if (Get-RunningClaudeMainProcesses) {
         Write-Warn "Claude is currently running. Close and reopen it for the change to take effect."
     } else {
-        Write-Info "Launch Claude. DevTools opens automatically if CLAUDE_DEV_TOOLS env var is set."
-    }
+        }
 }
 
 function Invoke-DisableDevModeMode {
@@ -402,8 +377,12 @@ function Invoke-SetupMode {
     Invoke-EnableDevModeMode
 
     Write-Info ""
-    Write-Info "Step 2/3: set CLAUDE_DEV_TOOLS=detach user env var"
-    Set-ClaudeDevToolsEnv -Value 'detach'
+    # CLAUDE_DEV_TOOLS=detach auto-opened a DevTools window on EVERY launch.
+    # That was needed when injection meant pasting into the Console; injection
+    # now goes through the main-process inspector, so the variable only makes
+    # DevTools pop up unbidden. Clear any value left over from older setups.
+    Write-Info "Step 2/3: clear CLAUDE_DEV_TOOLS (no longer needed; it force-opened DevTools)"
+    Set-ClaudeDevToolsEnv -Value ''
 
     Write-Info ""
     Write-Info "Step 3/3: copy current RTL snippet to clipboard"
@@ -508,26 +487,23 @@ function Invoke-LaunchLtrMode {
 
         Update-RepoQuietly
         Copy-SnippetToClipboard
-        Write-Info "Launching Claude with LTR window chrome + DevTools Protocol port:"
-        Write-Host "  `"$($info.Exe)`" --lang=en-US --force-ui-direction=ltr --remote-debugging-port=$RemotePort"
-        # --remote-debugging-port is what makes the whole flow hands-free: it
-        # opens Chromium's CDP endpoint for every renderer at launch, so the
-        # snippet can be injected (and registered for future documents)
-        # without a single click or keystroke. The app does not strip it; it
-        # only notes it as a "dangerous switch" and disables Claude-in-Chrome
-        # local pairing for that launch -- see scripts/cdp-renderer.ps1.
-        # (--inspect is NOT passed: this build ignores it, the node-cli-inspect
-        # fuse is off.)
-        Start-Process -FilePath $info.Exe -ArgumentList '--lang=en-US', '--force-ui-direction=ltr', "--remote-debugging-port=$RemotePort"
+        Write-Info "Launching Claude with LTR window chrome:"
+        Write-Host "  `"$($info.Exe)`" --lang=en-US --force-ui-direction=ltr"
+        # NO debugging switch is passed. Claude 1.34493+ REFUSES TO START if
+        # the command line contains one ("Claude: refusing to start -- a
+        # debugging or network-override switch is present"), unless a
+        # cryptographically signed CLAUDE_CDP_AUTH token is present. That is a
+        # deliberate hardening by the vendor, so injection uses the shipped
+        # main-process inspector instead (Developer -> Enable Main Process
+        # Debugger). --lang / --force-ui-direction are not on that blocklist.
+        Start-Process -FilePath $info.Exe -ArgumentList '--lang=en-US', '--force-ui-direction=ltr'
         Write-Ok "Launched. Window controls should now be on the RIGHT (unmirrored)."
 
-        # Wait for the CDP endpoint, then inject into every view.
+        # Wait for the app window, then inject if a channel is available.
         $dl = (Get-Date).AddSeconds(60)
-        while ((Get-Date) -lt $dl -and -not (Test-RemotePort)) { Start-Sleep -Milliseconds 700 }
+        while ((Get-Date) -lt $dl -and -not (Find-ClaudeMainTitle)) { Start-Sleep -Milliseconds 700 }
         Start-Sleep -Seconds 4   # let the session view finish loading
-        if (-not (Invoke-RendererInject)) {
-            [void](Invoke-CdpInject)   # older builds / flagless launch
-        }
+        [void](Invoke-CdpInject)
     } finally {
         try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch {}
     }
@@ -602,11 +578,7 @@ function Invoke-InjectMode {
         Update-RepoQuietly
         # Clipboard copy is a convenience for the manual Console fallback.
         Copy-SnippetToClipboard
-        # Renderer CDP first (open from launch, nothing to enable), then the
-        # main-process inspector for flagless launches and older builds.
-        if (-not (Invoke-RendererInject)) {
-            [void](Invoke-CdpInject)
-        }
+        [void](Invoke-CdpInject)
     } finally {
         try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch {}
     }

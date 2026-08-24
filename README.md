@@ -8,9 +8,9 @@ feature -- not any kind of binary or `app.asar` patching.
 
 פתרון לתצוגת RTL בעברית ב-Claude Desktop בלי לגעת בקבצי האפליקציה.
 משתמש בפיצ'ר רשמי של Claude בשם Developer Mode (כותב `allowDevTools=true`
-לקובץ הגדרות משתמש), ובמשתנה סביבה רשמי `CLAUDE_DEV_TOOLS=detach` שנקרא
-על ידי `app.asar` ופותח DevTools אוטומטית. אחרי הגדרה חד-פעמית, בכל הפעלת
-Claude מדביקים snippet קצר ב-Console כדי להפעיל RTL לסשן.
+לקובץ הגדרות משתמש) ובמנגנון ה-Main Process Debugger שהאפליקציה מספקת.
+אחרי הגדרה חד-פעמית, בכל הפעלת Claude מפעילים את ה-debugger מהתפריט
+ולוחצים Ctrl+Alt+R. אין הקלדות או הקלקות מסונתזות.
 אין שינוי קוד אפליקציה, אין שבירה של חתימת MSIX, אין persistence שמסומן
 ב-AV/EDR. עדכוני Microsoft Store עוברים שקופים.
 
@@ -19,10 +19,11 @@ Claude מדביקים snippet קצר ב-Console כדי להפעיל RTL לסשן
 **Is:** A small PowerShell script + CSS/JS snippet that:
 1. Sets `allowDevTools: true` in `%APPDATA%\Claude\config.json` -- the same
    key Claude's own *Enable Developer Mode* menu item writes.
-2. Sets `CLAUDE_DEV_TOOLS=detach` as a user environment variable -- a
-   variable Claude's own `app.asar` reads to auto-open DevTools.
-3. Provides a JS snippet you paste into the DevTools Console once per
-   session to apply RTL CSS rules and tag elements with `dir` attributes.
+2. Injects a CSS/`dir`-tagging snippet into every Claude view through
+   Electron's main-process inspector -- the channel behind Claude's own
+   *Enable Main Process Debugger* menu item.
+3. Synthesizes **no** mouse clicks and **no** keystrokes, so it can never
+   steal focus or type into another application.
 
 **Isn't:** A patcher. The script does not unpack, modify, or repack
 `app.asar`. It does not touch anything under
@@ -88,11 +89,13 @@ DevTools snippet from it, so updates propagate with zero manual steps.
 .\claude-rtl.ps1 -Mode Setup
 ```
 
-Writes `allowDevTools: true` into `%APPDATA%\Claude\config.json`
-(timestamped backup first), sets the `CLAUDE_DEV_TOOLS=detach` user env
-var, and copies the current snippet to your clipboard.
+Writes `allowDevTools: true` into `%APPDATA%\Claude\config.json` and
+`developer_settings.json` (timestamped backup first), clears the legacy
+`CLAUDE_DEV_TOOLS` variable (it force-opened DevTools on every launch),
+and copies the current snippet to your clipboard.
 
-**2. Save the snippet in DevTools** (the only manual step, ever):
+**2. Save the snippet in DevTools** (optional -- only for the manual
+Console fallback):
 
 Quit Claude fully (tray → Quit) and relaunch. Open DevTools with
 `Ctrl+Alt+I` (switch to an English keyboard layout first if the chord
@@ -112,15 +115,15 @@ Creates two Start Menu shortcuts: **"Claude (LTR)"** (pin it to the
 taskbar -- it is the app icon from now on) and **"Claude RTL Inject"**
 (global hotkey `Ctrl+Alt+R`).
 
-**Daily use:** launch Claude via the pinned "Claude (LTR)" icon. It
-gives you the unmirrored window and applies RTL to every view by itself
--- no further steps. `Ctrl+Alt+R` re-applies on demand.
+**Daily use:** launch Claude via the pinned "Claude (LTR)" icon, then
+once per run: hamburger -> Developer -> **Enable Main Process Debugger**,
+and press **`Ctrl+Alt+R`**. See *Per-session workflow* below.
 
 ## Upgrading from an older install (pre-launcher era)
 
 If you set this up back when the flow was "CopySnippet → paste in the
 Console" (snippet v13-v14), your machine already has dev mode and the
-env var. To move to the current fully-automatic flow:
+env var. To move to the current flow:
 
 1. Pull the latest:
 
@@ -156,10 +159,8 @@ If anything misbehaves: re-run `.\claude-rtl.ps1 -Mode Setup`
 
 ```powershell
 .\claude-rtl.ps1                     # Status (read-only)
-.\claude-rtl.ps1 -Mode EnableDevMode # writes config.json
+.\claude-rtl.ps1 -Mode EnableDevMode # writes config.json + developer_settings.json
 .\claude-rtl.ps1 -Mode CopySnippet   # snippet -> clipboard
-# Env var (Setup mode does this for you):
-[Environment]::SetEnvironmentVariable("CLAUDE_DEV_TOOLS", "detach", "User")
 ```
 
 ### PowerShell execution policy
@@ -180,31 +181,31 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 The injected CSS lives in the renderer process. When Claude is closed
 the page is gone, and the next launch needs the snippet run again.
 **There is no way to avoid this without modifying `app.asar`** -- and
-that's exactly what we're not doing. Option A makes the re-run automatic
-on every launch.
+that's exactly what we're not doing. Option A is the shortest safe
+re-run.
 
-### Option A -- nothing to do (recommended)
+### Option A -- one menu click, then a hotkey (recommended)
 
 Claude Desktop is several separate web documents: a shell, plus a
-`WebContentsView` per Claude Code session and one per preview pane. The
-**Claude (LTR)** shortcut launches Claude with
-`--remote-debugging-port=9222`, which opens Chromium's DevTools Protocol
-endpoint for all of them, and the launcher injects through it a few
-seconds later. It also registers the snippet for future documents, so
-chats you open afterwards are covered too.
+`WebContentsView` per Claude Code session and one per preview pane.
+Injection goes through Electron's **main-process inspector**, which
+reaches all of them at once. **No synthetic clicks or keystrokes are used
+anywhere**, so nothing can steal focus or leak input into another app.
 
-**No synthetic clicks or keystrokes are used anywhere**, so nothing can
-steal focus or leak input into another app.
+Once per Claude run:
 
-Day to day: launch Claude with the pinned **Claude (LTR)** icon. That's
-it. If you ever want to re-apply manually (or you started Claude some
-other way), press **`Ctrl+Alt+R`** -- safe from any window.
+1. Launch Claude with the pinned **Claude (LTR)** shortcut (unmirrored
+   window).
+2. In Claude: hamburger menu -> Developer -> **Enable Main Process
+   Debugger**. Stays on until Claude exits.
+3. Press **`Ctrl+Alt+R`** -- safe from any window, injects every view.
 
-> Trade-off worth knowing: the app treats `--remote-debugging-port` as a
-> "dangerous switch" and disables **Claude-in-Chrome local pairing** for
-> that launch. Nothing else is affected. If you use the Chrome extension,
-> launch Claude normally and use the fallback channel instead: hamburger
-> menu -> Developer -> **Enable Main Process Debugger**, then `Ctrl+Alt+R`.
+> Why step 2 cannot be automated: Claude 1.34493+ **refuses to start** if
+> the command line carries a debugging switch (`--remote-debugging-port`,
+> `--inspect`, ...) without a signed `CLAUDE_CDP_AUTH` token, and driving
+> the menu with simulated clicks/keystrokes is exactly the behaviour that
+> was removed for leaking input into other applications. One deliberate
+> click is the honest cost.
 
 ### Option B -- DevTools Snippets, manual trigger (3 keystrokes per session)
 
@@ -224,7 +225,7 @@ Option A launch path (it delegates to `-Mode LaunchLtr`).
 | Mode | What it does |
 |---|---|
 | `Status` (default) | Read-only. Shows version, run state, current `allowDevTools` value. |
-| `Setup` | One-shot: `EnableDevMode` + sets `CLAUDE_DEV_TOOLS=detach` env var + broadcasts the env change + copies snippet to clipboard. |
+| `Setup` | One-shot: `EnableDevMode` + clears the legacy `CLAUDE_DEV_TOOLS` env var (it force-opened DevTools on every launch) + copies snippet to clipboard. |
 | `EnableDevMode` | Creates or updates `config.json`, sets `allowDevTools = true`. Auto-creates the file/directory if Claude has never launched. Backs up first if it exists. |
 | `DisableDevMode` | Backs up `config.json`, removes the `allowDevTools` key. |
 | `CopySnippet` | Puts the injection snippet on your clipboard. |
@@ -312,7 +313,6 @@ version.
 | Script hangs at "Type Y to proceed" | Older version with `Read-Host` prompt running in a non-interactive shell (e.g. inside Claude Code) | Pull the latest -- prompts have been removed. Or pass `-Mode Setup` which is always non-interactive |
 | `Config not found at … launch Claude at least once first` | Older version that required pre-existing `config.json` | Pull the latest -- `EnableDevMode` now creates the file if missing |
 | `running scripts is disabled on this system` | PowerShell execution policy | Run with `powershell -ExecutionPolicy Bypass -File .\claude-rtl.ps1 -Mode Setup` or change policy (see *PowerShell execution policy* above) |
-| DevTools doesn't auto-open | `CLAUDE_DEV_TOOLS` env var didn't propagate to Explorer | `-Mode Setup` broadcasts `WM_SETTINGCHANGE` to fix this. If still missing: sign out + back in, or open Claude via `Claude-RTL.cmd` which inherits the env var from PowerShell |
 | `Ctrl+Alt+I` does nothing in Claude | Hebrew keyboard layout intercepts `Ctrl+Alt` as `AltGr` | Switch to English layout (`Win+Space`) before pressing, or rely on the auto-open env var instead |
 | Hamburger menu hidden behind window-controls overlay | Windows RTL OS locale flips title-bar buttons | The snippet adds inline-start padding via the WCO API; falls back to 140px if WCO API is unavailable. Or launch via `-Mode LaunchLtr`, which unmirrors the window entirely |
 | Browser/preview pane draws a duplicate "ghost" copy floating over the chat; disappears on focus, returns on blur | Claude Desktop bug on RTL-mirrored Windows (Hebrew/Arabic display language): the embedded webview and its snapshot layer are positioned in different coordinate spaces. Reproduces with no snippet injected | Quit Claude fully, relaunch via `Claude-RTL.cmd` or `-Mode LaunchLtr` (forces LTR window chrome). Chat content RTL is unaffected -- the snippet handles that inside the page |
