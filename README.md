@@ -112,10 +112,11 @@ Creates two Start Menu shortcuts: **"Claude (LTR)"** (pin it to the
 taskbar -- it is the app icon from now on) and **"Claude RTL Inject"**
 (global hotkey `Ctrl+Alt+R`).
 
-**Daily use:** launch Claude via the pinned "Claude (LTR)" icon and do
-nothing else -- unmirrored window, session auto-injected. If a session
-ever renders LTR (e.g. the app opened on the Home screen at launch),
-click into the chat and press `Ctrl+Alt+R`.
+**Daily use:** launch Claude via the pinned "Claude (LTR)" icon (this
+gives you the unmirrored window). Then, once per Claude run: hamburger
+menu -> Developer -> **Enable Main Process Debugger**, and press
+**`Ctrl+Alt+R`**. See *Per-session workflow* below for why that one step
+is deliberately manual.
 
 ## Upgrading from an older install (pre-launcher era)
 
@@ -142,9 +143,13 @@ env var. To move to the current fully-automatic flow:
    content: the automation re-syncs it from this repo before every run.
 
 That's the whole upgrade. You get: an unmirrored window (no ghost
-preview-pane on Hebrew/Arabic Windows), automatic injection on every
-launch, `Ctrl+Alt+R` for on-demand injection, and silent self-updates
-(the launcher git-pulls this repo on every launch/inject).
+preview-pane on Hebrew/Arabic Windows), `Ctrl+Alt+R` to apply RTL to
+every view at once, and silent self-updates (the launcher git-pulls this
+repo on every launch/inject).
+
+Note: the DevTools snippet named `Claude-RTL` is only used by the manual
+Console fallback now -- current builds inject through the main-process
+inspector instead, straight from `scripts/inject-snippet.js`.
 
 If anything misbehaves: re-run `.\claude-rtl.ps1 -Mode Setup`
 (idempotent) and check `%TEMP%\claude-rtl-launch.log`.
@@ -177,47 +182,34 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 The injected CSS lives in the renderer process. When Claude is closed
 the page is gone, and the next launch needs the snippet run again.
 **There is no way to avoid this without modifying `app.asar`** -- and
-that's exactly what we're not doing. The closest thing is Option A,
-which automates the re-run completely.
+that's exactly what we're not doing. Option A is the fastest safe
+re-run: two clicks in Claude's own menu, then one hotkey.
 
-### Option A -- One hotkey per session (recommended)
+### Option A -- Ctrl+Alt+R (recommended)
 
-Claude Desktop is several separate web documents: a shell
-(`claude.ai/epitaxy` -- sidebar, chrome) plus one **native
-WebContentsView per Claude Code session** (`claude.ai/epitaxy/local_*`
--- the chat transcript, composer, and terminal live there). The snippet
-must run inside the session's own document; `Ctrl+Alt+I` opens DevTools
-for whichever view has focus.
+Claude Desktop is several separate web documents: a shell, plus a
+`WebContentsView` per Claude Code session and one per preview pane. The
+tool reaches all of them at once through Electron's **main-process
+inspector** -- a local socket conversation, with **no synthetic clicks or
+keystrokes anywhere**, so it can never steal focus or leak input into
+another application.
 
-One-time setup: save the snippet as a DevTools snippet named
-**`Claude-RTL`**:
+Per Claude run, once:
 
-1. Run `.\claude-rtl.ps1 -Mode CopySnippet` (puts the snippet on your
-   clipboard).
-2. In Claude's DevTools: **Sources** tab → left sidebar **>>** →
-   **Snippets** → right-click → **New snippet**. Name it `Claude-RTL`.
-3. Click into the editor, `Ctrl+V`, then `Ctrl+S` to save. (DevTools
-   snippets persist across restarts and Store updates, and are shared
-   by every DevTools window of the app.)
-4. Run `.\claude-rtl.ps1 -Mode InstallShortcut`; pin **"Claude (LTR)"**
-   to your taskbar.
+1. Launch Claude with the pinned **Claude (LTR)** shortcut.
+2. In Claude: **hamburger menu -> Developer -> Enable Main Process
+   Debugger** (two seconds; it stays enabled until Claude exits).
+3. Press **`Ctrl+Alt+R`** -- from anywhere, even while working in another
+   app. Every view gets the RTL fix.
 
-Day-to-day: just launch Claude with the pinned **Claude (LTR)** icon.
-The launcher clicks into the session view for you, injects the snippet
-through DevTools, and closes DevTools -- fully hands-free. Claude
-reuses ONE session view for all chats, so a single injection per launch
-covers every session you open. If the automation ever misses (e.g. the
-app opened on the Home screen), click into your chat and press
-**`Ctrl+Alt+R`** -- same injection, on demand, ~3 seconds.
+Repeat step 3 whenever you want to re-apply it; it is idempotent.
 
-Keyboard-layout note: synthetic keystrokes translate through the active
-layout (a Hebrew layout garbles chords and names), so the automation
-switches the target window's input language to en-US first
-(`WM_INPUTLANGCHANGEREQUEST`, per-window) and restores it afterwards.
-
-If the automation can't run safely (focus stolen, no DevTools window),
-it warns, leaves the snippet on the clipboard, and never types into the
-wrong window -- fall back to Option C for that session.
+> Why step 2 is manual: the app ignores `--inspect` on the command line
+> (Electron's node-cli-inspect fuse is off) and `process._debugProcess()`
+> cannot attach to the Electron main process, so the menu is the only way
+> in. Earlier versions automated that menu with simulated clicks and
+> keystrokes -- and when focus moved at the wrong moment, those went to
+> whatever app was in front. That automation has been removed entirely.
 
 ### Option B -- DevTools Snippets, manual trigger (3 keystrokes per session)
 
@@ -242,9 +234,8 @@ Option A launch path (it delegates to `-Mode LaunchLtr`).
 | `DisableDevMode` | Backs up `config.json`, removes the `allowDevTools` key. |
 | `CopySnippet` | Puts the injection snippet on your clipboard. |
 | `PrintSnippet` | Prints the snippet to stdout. |
-| `LaunchLtr` | Copies the snippet, launches Claude with `--lang=en-US --force-ui-direction=ltr` (unmirrored window chrome on Hebrew/Arabic Windows display languages -- works around the ghost preview-pane layer, see Troubleshooting), then auto-injects the snippet into the shell document (opens DevTools itself via Ctrl+Alt+I, runs the saved `Claude-RTL` snippet, closes DevTools). If Claude is already open it just focuses the window (Electron's single-instance lock would ignore the flags anyway). The flags are needed on every launch -- there is no persistent setting. |
-| `Inject` | **Applies the RTL fix to everything.** On Claude 1.30096+ it injects through Electron's main-process inspector (CDP), covering the shell, the chat session and any preview panes in one call -- no focus needed, works from any window. On older builds it falls back to the DevTools automation described below. |
-| `Inject` (legacy path) | **Per-session RTL fix.** Claude Code session views are separate native WebContentsViews -- the shell injection cannot reach them, and `Ctrl+Alt+I` targets the *focused* webview. Click into your session, then run this mode (or press the **Ctrl+Alt+R** hotkey installed by `InstallShortcut`): it opens DevTools for that session, runs the `Claude-RTL` snippet (override name with `-SnippetName`), closes DevTools, and restores your keyboard layout. |
+| `LaunchLtr` | Launches Claude with `--lang=en-US --force-ui-direction=ltr` (unmirrored window chrome on Hebrew/Arabic Windows display languages -- works around the ghost preview-pane layer, see Troubleshooting), then tries to inject via CDP. If the main-process inspector is closed it prints the one-time menu step and stops. If Claude is already running with the flags it just focuses the window; if it is running WITHOUT them (the usual post-Store-update state) it restarts it. |
+| `Inject` | **Applies the RTL fix to everything** through Electron's main-process inspector (CDP): the shell, the chat session and any preview panes in one call. Needs no focus and synthesizes no input, so it is safe to trigger from any window. Requires the inspector to be enabled once per Claude run (hamburger -> Developer -> Enable Main Process Debugger); if it is closed, the mode says so and does nothing. |
 | `InstallShortcut` | Creates two Start Menu shortcuts with Claude's icon: **"Claude (LTR)"** (silently runs `LaunchLtr` -- pin to taskbar, it IS the app icon from now on) and **"Claude RTL Inject"** (silently runs `Inject`, global hotkey **Ctrl+Alt+R**). Re-run after a Store update if the icons go generic. |
 
 All modes are non-interactive (no Y/N prompts). The `-NoConfirm` flag is

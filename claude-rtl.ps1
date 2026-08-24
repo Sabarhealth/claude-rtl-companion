@@ -241,120 +241,21 @@ function Test-InspectorPort {
     } catch { return $false }
 }
 
-function Invoke-NativeMenuItem {
-    # Find a popup-menu item BY NAME via UI Automation and invoke it.
-    # Electron's Menu.popup() produces a native Win32 menu (window class
-    # "#32768"), which UIA exposes as MenuItem elements -- so we can act on
-    # "Enable Main Process Debugger" itself instead of guessing at pixel
-    # coordinates or keystroke sequences that break when items are reordered.
-    param([string]$Name, [int]$TimeoutSec = 6)
-    Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes -ErrorAction SilentlyContinue
-    $root = [System.Windows.Automation.AutomationElement]::RootElement
-    $menuCond = New-Object System.Windows.Automation.PropertyCondition(
-        [System.Windows.Automation.AutomationElement]::ClassNameProperty, '#32768')
-    $nameCond = New-Object System.Windows.Automation.PropertyCondition(
-        [System.Windows.Automation.AutomationElement]::NameProperty, $Name)
-
-    $deadline = (Get-Date).AddSeconds($TimeoutSec)
-    while ((Get-Date) -lt $deadline) {
-        $menus = $root.FindAll([System.Windows.Automation.TreeScope]::Children, $menuCond)
-        foreach ($menu in $menus) {
-            $item = $menu.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $nameCond)
-            if ($item) {
-                # Submenu parents expose ExpandCollapse; leaf items expose Invoke.
-                try {
-                    $ec = $item.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
-                    $ec.Expand(); return $true
-                } catch {}
-                try {
-                    $inv = $item.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
-                    $inv.Invoke(); return $true
-                } catch {}
-                # Neither pattern: fall back to selecting it via keyboard focus.
-                try { $item.SetFocus(); (New-Object -ComObject WScript.Shell).SendKeys('{ENTER}'); return $true } catch {}
-            }
-        }
-        Start-Sleep -Milliseconds 300
-    }
-    return $false
-}
-
-function Enable-MainProcessDebugger {
-    # Drive the shipped menu item: hamburger -> Developer -> Enable Main
-    # Process Debugger. Electron ignores --inspect on this build (fuse off,
-    # verified live) and Node's process._debugProcess() cannot attach to the
-    # Electron main process either, so this menu is the only way in.
-    #
-    # Two navigation strategies, each verified by polling the inspector port:
-    #   1. type-ahead: 'e' cycles Extensions -> Enable Main Process Debugger
-    #   2. positional: End, then Up x3 (the item sits 4th from the bottom)
-    # Menus differ between builds; trying both costs a second and makes this
-    # survive item reordering.
-    $mainTitle = Find-ClaudeMainTitle
-    if (-not $mainTitle) { return $false }
-    $shellM = New-Object -ComObject WScript.Shell
-
-    foreach ($strategy in @('uia', 'typeahead', 'positional')) {
-        if (-not (Set-TypingTarget $mainTitle 'Claude*')) { return $false }
-        # The hamburger sits at the top-left of the client area.
-        [void][ClaudeRtl.Win32]::SetCursorPos(34, 15)
-        Start-Sleep -Milliseconds 250
-        [ClaudeRtl.Win32]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
-        [ClaudeRtl.Win32]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
-        Start-Sleep -Milliseconds 1000
-        if ($strategy -eq 'uia') {
-            # Act on the menu items by name -- no keystrokes at all.
-            if (-not (Invoke-NativeMenuItem 'Developer')) {
-                Write-Info "UIA: 'Developer' menu item not found."
-                $shellM.SendKeys('{ESC}'); Start-Sleep -Milliseconds 500
-                continue
-            }
-            Start-Sleep -Milliseconds 800
-            if (-not (Invoke-NativeMenuItem 'Enable Main Process Debugger')) {
-                Write-Info "UIA: 'Enable Main Process Debugger' not found."
-                $shellM.SendKeys('{ESC}'); Start-Sleep -Milliseconds 400
-                $shellM.SendKeys('{ESC}'); Start-Sleep -Milliseconds 400
-                continue
-            }
-            Start-Sleep -Seconds 3
-            if (Test-InspectorPort) { Write-Info "Main process debugger enabled (uia)."; return $true }
-            Write-Info "Debugger not up after 'uia' attempt."
-            continue
-        }
-        $shellM.SendKeys('d')          # Developer
-        Start-Sleep -Milliseconds 700
-        $shellM.SendKeys('{RIGHT}')    # open submenu
-        Start-Sleep -Milliseconds 900
-        if ($strategy -eq 'typeahead') {
-            $shellM.SendKeys('e'); Start-Sleep -Milliseconds 400   # Extensions
-            $shellM.SendKeys('e'); Start-Sleep -Milliseconds 400   # Enable Main Process Debugger
-        } else {
-            $shellM.SendKeys('{END}'); Start-Sleep -Milliseconds 400
-            $shellM.SendKeys('{UP}{UP}{UP}'); Start-Sleep -Milliseconds 400
-        }
-        $shellM.SendKeys('{ENTER}')
-        Start-Sleep -Seconds 3
-        if (Test-InspectorPort) {
-            Write-Info "Main process debugger enabled ($strategy)."
-            return $true
-        }
-        Write-Info "Debugger not up after '$strategy' attempt."
-        $shellM.SendKeys('{ESC}'); Start-Sleep -Milliseconds 400   # close any stray menu
-        $shellM.SendKeys('{ESC}'); Start-Sleep -Milliseconds 400
-    }
-    return $false
-}
 
 function Invoke-CdpInject {
+    # This tool NEVER synthesizes mouse clicks or keystrokes. Earlier versions
+    # drove Claude's menus and DevTools with SendKeys/mouse_event; whenever the
+    # foreground window was not the one we expected, those inputs leaked into
+    # whatever app the user was actually working in. All of it is gone: the
+    # CDP path below only speaks to Electron over a local socket, so it cannot
+    # touch focus, the keyboard layout, or any other window.
     $cdp = Join-Path $scriptDir 'scripts\cdp-inject.ps1'
     if (-not (Test-Path $cdp)) { Write-Warn "cdp-inject.ps1 not found."; return $false }
     if (-not (Test-InspectorPort)) {
-        Write-Info "Main-process inspector not listening; enabling it via the Developer menu."
-        if (-not (Enable-MainProcessDebugger)) {
-            Write-Warn "Could not enable the main process debugger."
-            Write-Info "Enable it manually once per app run: hamburger -> Developer -> Enable Main Process Debugger."
-            return $false
-        }
+        Write-Warn "Main-process inspector is not open, so there is nothing to inject through."
+        Write-Info "Enable it ONCE per Claude run:  hamburger menu -> Developer -> Enable Main Process Debugger"
+        Write-Info "then run this again (Ctrl+Alt+R). It stays open until Claude exits."
+        return $false
     }
     & $cdp -SnippetPath $SnippetPath -Port $InspectorPort
     return ($LASTEXITCODE -eq 0)
@@ -598,19 +499,12 @@ function Invoke-LaunchLtrMode {
         $dl = (Get-Date).AddSeconds(60)
         while ((Get-Date) -lt $dl -and -not (Find-ClaudeMainTitle)) { Start-Sleep -Milliseconds 700 }
         Start-Sleep -Seconds 4   # let the session view finish loading
-        if (-not (Invoke-CdpInject)) {
-            Write-Info "CDP injection unavailable; falling back to DevTools automation."
-            Invoke-AutoInject
-        }
-        Restore-TypingLayout
+        [void](Invoke-CdpInject)   # prints what to do if the inspector is closed
     } finally {
         try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch {}
     }
 }
 
-# The detached DevTools window title is "Developer Tools - <url>"
-# (verified live on Claude Desktop 1.22209.3.0; it is NOT "DevTools").
-$DevToolsTitlePattern = '*Developer Tools*'
 
 # Process.MainWindowTitle exposes only ONE window per process -- whichever
 # Windows currently deems "main" -- so an open DevTools window can hide
@@ -660,111 +554,14 @@ function Find-ClaudeMainTitle {
         Select-Object -First 1
 }
 
-# Win32 helpers shared by every automation path (script scope on purpose:
-# these used to live inside Invoke-AutoInject, which made them invisible to
-# other callers and broke the debugger-menu fallback at runtime).
-Add-Type -Namespace ClaudeRtl -Name Win32 -MemberDefinition @'
-[StructLayout(LayoutKind.Sequential)]
-public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
-[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-[DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder text, int count);
-[DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern IntPtr LoadKeyboardLayout(string pwszKLID, uint Flags);
-[DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
-[DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern IntPtr FindWindow(string cls, string title);
-[DllImport("user32.dll")] public static extern void SwitchToThisWindow(IntPtr hWnd, bool altTab);
-[DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
-[DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
-[DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, System.UIntPtr extra);
-[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr pid);
-[DllImport("user32.dll")] public static extern IntPtr GetKeyboardLayout(uint idThread);
-'@ -ErrorAction SilentlyContinue
-
-# The user's own input language, captured before we force en-US for the
-# synthetic keystrokes. Restored by Restore-TypingLayout when we are done --
-# otherwise the user is silently left typing English in a Hebrew chat.
-$script:SavedHkl = [IntPtr]::Zero
-
-# Focus a window by its EXACT title (bidi marks included), verify it really
-# became foreground, then switch its input language to en-US so synthetic
-# keystrokes are not re-mapped by a Hebrew layout. $Pattern is matched
-# against the STRIPPED foreground title. Returns $true when safe to type.
-function Set-TypingTarget([string]$Title, [string]$Pattern) {
-    $sh = New-Object -ComObject WScript.Shell
-    # Up to 3 activate+verify rounds: window transitions can transiently
-    # report an EMPTY foreground title right after a window opens, and
-    # AppActivate alone loses to the foreground lock when the user is
-    # actively working in another app.
-    $fg = [IntPtr]::Zero
-    for ($round = 1; $round -le 3; $round++) {
-        $null = $sh.AppActivate($Title)
-        Start-Sleep -Milliseconds 700
-        $fg = [ClaudeRtl.Win32]::GetForegroundWindow()
-        $sb = New-Object System.Text.StringBuilder 512
-        [void][ClaudeRtl.Win32]::GetWindowText($fg, $sb, 512)
-        if ((Strip-BidiMarks $sb.ToString()) -like $Pattern) { break }
-        $h = [ClaudeRtl.Win32]::FindWindow($null, $Title)
-        if ($h -ne [IntPtr]::Zero) {
-            [ClaudeRtl.Win32]::SwitchToThisWindow($h, $true)
-            Start-Sleep -Milliseconds 700
-            $fg = [ClaudeRtl.Win32]::GetForegroundWindow()
-            $sb = New-Object System.Text.StringBuilder 512
-            [void][ClaudeRtl.Win32]::GetWindowText($fg, $sb, 512)
-        }
-        if ((Strip-BidiMarks $sb.ToString()) -like $Pattern) { break }
-        if ($round -eq 3) {
-            Write-Warn "Foreground window is '$($sb.ToString())', expected '$Pattern' -- not typing."
-            return $false
-        }
-        Start-Sleep -Milliseconds 500
-    }
-    # Remember the window's CURRENT layout before forcing en-US, so it can be
-    # restored afterwards. Only the first capture counts -- later calls would
-    # otherwise "save" the en-US we just set.
-    if ($script:SavedHkl -eq [IntPtr]::Zero) {
-        $tid = [ClaudeRtl.Win32]::GetWindowThreadProcessId($fg, [IntPtr]::Zero)
-        $script:SavedHkl = [ClaudeRtl.Win32]::GetKeyboardLayout($tid)
-    }
-    $hkl = [ClaudeRtl.Win32]::LoadKeyboardLayout('00000409', 1)  # KLF_ACTIVATE
-    [void][ClaudeRtl.Win32]::PostMessage($fg, 0x0050, [IntPtr]::Zero, $hkl)  # WM_INPUTLANGCHANGEREQUEST
-    Start-Sleep -Milliseconds 300
-    return $true
-}
-
-function Restore-TypingLayout {
-    # Put the user's original input language back on the main window.
-    if ($script:SavedHkl -eq [IntPtr]::Zero) { return }
-    $mainTitle = Find-ClaudeMainTitle
-    if (-not $mainTitle) { return }
-    $sh = New-Object -ComObject WScript.Shell
-    if (-not $sh.AppActivate($mainTitle)) { return }
-    Start-Sleep -Milliseconds 400
-    $fg = [ClaudeRtl.Win32]::GetForegroundWindow()
-    [void][ClaudeRtl.Win32]::PostMessage($fg, 0x0050, [IntPtr]::Zero, $script:SavedHkl)
-    $script:SavedHkl = [IntPtr]::Zero
-}
-
-function Find-DevToolsWindow {
-    param([int]$TimeoutSec)
-    $deadline = (Get-Date).AddSeconds($TimeoutSec)
-    while ($true) {
-        $t = [ClaudeRtl.WinEnum]::Titles() |
-            Where-Object { (Strip-BidiMarks $_) -like $DevToolsTitlePattern } |
-            Select-Object -First 1
-        if ($t) { return $t }
-        if ((Get-Date) -ge $deadline) { return $null }
-        Start-Sleep -Milliseconds 500
-    }
-}
 
 function Invoke-InjectMode {
     # Per-session injection. Claude's session views are native
     # WebContentsViews (verified: app.asar has 8x WebContentsView/
-    # addChildView, zero <webview> tags), so shell-document JS cannot
-    # reach them and Ctrl+Alt+I targets the FOCUSED webview. Flow:
-    # the user clicks into their session, then triggers this mode
-    # (pinned shortcut / Ctrl+Alt+R hotkey); we open DevTools for that
-    # session, run the saved snippet, close DevTools, restore the
-    # user's keyboard layout.
+    # addChildView, zero <webview> tags), so shell-document JS cannot reach
+    # them. Injection goes through Electron's main-process inspector, which
+    # reaches every view at once -- no focus required, so this is safe to
+    # trigger from anywhere (Ctrl+Alt+R) while you work in another app.
     $log = Join-Path $env:TEMP 'claude-rtl-launch.log'
     try { Start-Transcript -Path $log -Append -ErrorAction SilentlyContinue | Out-Null } catch {}
     try {
@@ -774,223 +571,15 @@ function Invoke-InjectMode {
             exit 1
         }
 
-        # The clipboard feeds the editor-sync step in Invoke-AutoInject (the
-        # saved DevTools snippet is refreshed from the repo on every inject).
         Update-RepoQuietly
+        # Clipboard copy is a convenience for the manual Console fallback.
         Copy-SnippetToClipboard
-        # CDP first: it reaches every view (including ones DevTools cannot
-        # attach to on 1.30096+) and needs no focus. UI automation is the
-        # fallback for older builds where the inspector is unavailable.
-        if (-not (Invoke-CdpInject)) {
-            Write-Info "CDP injection unavailable; falling back to DevTools automation."
-            Invoke-AutoInject -Immediate
-        }
+        [void](Invoke-CdpInject)   # prints what to do if the inspector is closed
     } finally {
         try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch {}
     }
-
-    # Put the user's own input language back (the earlier version restored
-    # GetKeyboardLayout(0) -- the PowerShell thread's layout, i.e. en-US --
-    # which is exactly how users ended up stuck typing English).
-    Restore-TypingLayout
 }
 
-function Invoke-AutoInject {
-    param([switch]$Immediate)
-    # Zero-touch injection. Prerequisite (one-time): in Claude's DevTools,
-    # save the snippet as a DevTools snippet named "Claude-RTL" (Sources ->
-    # Snippets -> New snippet; override the expected name with -SnippetName).
-    # Flow (each step verified live):
-    #   1. Wait for the main Claude window; give DevTools a chance to
-    #      auto-open (CLAUDE_DEV_TOOLS=detach). If it doesn't, focus the
-    #      main window and send Ctrl+Alt+I to open it ourselves.
-    #   2. Focus the DevTools window and drive Quick Open:
-    #      Ctrl+P, "!<name>", Enter -- the "!" prefix runs snippets.
-    #      NOT Ctrl+Shift+P: the Command Menu pre-fills ">", producing
-    #      ">!name" which matches nothing (bug found live).
-    # SendKeys resolves every character (including the 'i'/'p' in the
-    # chords) through the window's ACTIVE keyboard layout, so under a
-    # Hebrew layout the keystrokes would mis-translate. Before typing into
-    # any window we switch its input language to en-US via
-    # WM_INPUTLANGCHANGEREQUEST -- per-window, the desktop keeps its layout.
-    # Every bail-out leaves the snippet on the clipboard for manual paste.
-    $shell = New-Object -ComObject WScript.Shell
-
-    # Left-click at a fractional position inside the FOREGROUND window.
-    # Used at launch to move focus from the shell document into the session
-    # view (the transcript area) so Ctrl+Alt+I targets the session.
-    function Click-InForeground([double]$FracX, [double]$FracY) {
-        $fg = [ClaudeRtl.Win32]::GetForegroundWindow()
-        $r = New-Object ClaudeRtl.Win32+RECT
-        [void][ClaudeRtl.Win32]::GetWindowRect($fg, [ref]$r)
-        $x = $r.Left + [int](($r.Right - $r.Left) * $FracX)
-        $y = $r.Top + [int](($r.Bottom - $r.Top) * $FracY)
-        [void][ClaudeRtl.Win32]::SetCursorPos($x, $y)
-        Start-Sleep -Milliseconds 150
-        [ClaudeRtl.Win32]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)   # LEFTDOWN
-        [ClaudeRtl.Win32]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)   # LEFTUP
-        Start-Sleep -Milliseconds 300
-    }
-
-
-    # -- Step 1: get a DevTools window on screen ----------------------------
-    if (-not $Immediate) {
-        # Fresh launch: wait for the app's main window first.
-        $mainDeadline = (Get-Date).AddSeconds(60)
-        $main = $null
-        while ((Get-Date) -lt $mainDeadline) {
-            Start-Sleep -Milliseconds 500
-            $main = Find-ClaudeMainTitle
-            if ($main) { break }
-        }
-        if (-not $main) {
-            Write-Warn "Claude main window not found within 60s -- skipping auto-inject."
-            return
-        }
-    }
-
-    # Ctrl+Alt+I opens DevTools for the FOCUSED webview. Session views are
-    # native WebContentsViews whose document URL is claude.ai/epitaxy/local_*
-    # -- and one view is REUSED across all sessions (verified live), so a
-    # single injection into it covers every chat until the app exits.
-    # At launch the shell has focus, so we first CLICK into the transcript
-    # area to focus the session view, then verify by the DevTools title
-    # ('local_' = session document, otherwise we hit the shell and retry).
-    # In Immediate mode (Ctrl+Alt+R) the user's own focus picks the target.
-    # Acquire a DevTools window attached to the SESSION view. A window may
-    # already exist (CLAUDE_DEV_TOOLS=detach auto-open fires on some
-    # launches, or a leftover) -- it goes through the SAME verification as
-    # one we open ourselves; a non-session target gets closed and retried.
-    if ($Immediate) {
-        # "Inject where I am": a leftover DevTools window (auto-open or a
-        # previous run) would hijack the target, because in Immediate mode
-        # we cannot verify which view the user means by title alone. Close
-        # ALL existing DevTools windows first, then open fresh from the
-        # user's focus.
-        for ($sweep = 0; $sweep -lt 4; $sweep++) {
-            $stale = Find-DevToolsWindow -TimeoutSec 0
-            if (-not $stale) { break }
-            if (-not (Set-TypingTarget $stale $DevToolsTitlePattern)) { break }
-            $shell.SendKeys('%{F4}')
-            Start-Sleep -Milliseconds 800
-        }
-    }
-    $title = Find-DevToolsWindow -TimeoutSec 1
-    $attempt = 0
-    while ($true) {
-        if ($title) {
-            # A freshly opened window may still be loading and titled just
-            # "Developer Tools" -- let it settle and re-read, the URL suffix
-            # carries the 'local_' session marker we verify against.
-            if ($title -notlike '*-*') {
-                Start-Sleep -Milliseconds 1500
-                $settled = Find-DevToolsWindow -TimeoutSec 1
-                if ($settled) { $title = $settled }
-            }
-            if ($Immediate -or $title -like '*local_*') { break }   # good target
-            if ($attempt -ge 3) { break }   # give up -> shell as best effort
-            Write-Info "DevTools attached to '$title' (not a session view); closing and retrying."
-            if (Set-TypingTarget $title $DevToolsTitlePattern) { $shell.SendKeys('%{F4}') }
-            Start-Sleep -Milliseconds 900
-            $title = $null
-        }
-        $attempt++
-        if (-not $Immediate) { Start-Sleep -Seconds 2 }   # let the app settle
-        $mainTitle = Find-ClaudeMainTitle
-        if (-not $mainTitle -or -not (Set-TypingTarget $mainTitle 'Claude*')) {
-            Write-Warn "Could not safely focus the Claude window -- paste manually (snippet is on the clipboard)."
-            return
-        }
-        if (-not $Immediate) {
-            Click-InForeground 0.62 0.45   # focus the session view
-        }
-        $shell.SendKeys('^%i')   # Ctrl+Alt+I
-        $title = Find-DevToolsWindow -TimeoutSec 8
-        if (-not $title) {
-            # Claude 1.30096+: the accelerator can open DevTools DOCKED
-            # inside the main window -- no separate top-level window exists,
-            # so the finder sees nothing. Focus is inside the docked
-            # DevTools right after the chord, so drive its Command Menu to
-            # undock into a separate window. DevTools remembers the dock
-            # state per profile, so this self-heals permanently.
-            Write-Info "No separate window -- assuming DOCKED DevTools; sending undock command."
-            $shell.SendKeys('^+p')     # DevTools Command Menu ('>' prefilled)
-            Start-Sleep -Milliseconds 600
-            $shell.SendKeys('undock')
-            Start-Sleep -Milliseconds 600
-            $shell.SendKeys('{ENTER}')
-            $title = Find-DevToolsWindow -TimeoutSec 8
-        }
-        if (-not $title) {
-            Write-Warn "No DevTools window appeared -- skipping auto-inject. Is allowDevTools enabled? (-Mode Setup)."
-            return
-        }
-    }
-    Write-Info "DevTools window: '$title'"
-    if ($title -notlike '*local_*') {
-        Write-Warn "This DevTools is NOT a session view (no 'local_' in the URL) -- injecting anyway, but the chat may be unaffected."
-        Write-Warn "Click inside the chat area and press Ctrl+Alt+R to inject the session itself."
-    }
-
-    # -- Step 2: run the saved snippet via the Command Menu -----------------
-    Start-Sleep -Seconds 2   # let DevTools finish loading its panels
-    if (-not (Set-TypingTarget $title $DevToolsTitlePattern)) {
-        Write-Warn "Could not safely focus the DevTools window -- paste manually (snippet is on the clipboard)."
-        return
-    }
-    # Normalize DevTools zoom first. A chord's Ctrl can register as still
-    # held when the next typed character arrives while DevTools is busy --
-    # a '-' then becomes Ctrl+Minus (zoom out), and DevTools PERSISTS its
-    # zoom level across sessions. Ctrl+0 both prevents confusion and heals
-    # any past accident.
-    $shell.SendKeys('^0')
-    Start-Sleep -Milliseconds 300
-    # Quick Open filter: lowercase alphanumerics only. Fuzzy matching still
-    # finds the snippet ("claudertl" -> "Claude-RTL"), and dropping hyphens/
-    # uppercase avoids exactly the stuck-modifier race described above.
-    $filter = ($SnippetName.ToLower() -replace '[^a-z0-9]', '')
-    if (-not $filter) { $filter = $SnippetName -replace '([+^%~(){}\[\]])', '{$1}' }
-    $shell.SendKeys('^p')        # Quick Open (NOT ^+p -- see note above)
-    Start-Sleep -Milliseconds 500
-    $shell.SendKeys('!' + $filter)  # "!" is literal in WScript SendKeys (not Alt)
-    Start-Sleep -Milliseconds 600
-    $shell.SendKeys('{ENTER}')   # opens the snippet in the editor...
-    Start-Sleep -Milliseconds 800
-    # ...because on current DevTools (148) "!name"+Enter only OPENS the
-    # snippet -- it does not run it (verified live with screenshots).
-    # Newer DevTools builds (Claude 1.259xx) leave FOCUS in the navigator
-    # after Quick Open, so select-all/paste/save would silently no-op
-    # (verified live: the Line/Column indicator vanishes from the status
-    # bar). Click into the editor pane to focus it before typing.
-    Click-InForeground 0.55 0.45
-    Start-Sleep -Milliseconds 300
-    # While the editor is focused, SYNC the saved snippet from the repo:
-    # the clipboard holds the latest inject-snippet.js (Copy-SnippetToClipboard
-    # ran at the start of both LaunchLtr and Inject), so select-all + paste +
-    # save keeps the DevTools copy current -- git pull + inject = updated,
-    # no manual re-pasting ever. A corrupted clipboard would momentarily
-    # break the saved copy, but the next inject re-syncs it from the repo.
-    $shell.SendKeys('^a')
-    Start-Sleep -Milliseconds 250
-    $shell.SendKeys('^v')
-    Start-Sleep -Milliseconds 500
-    $shell.SendKeys('^s')
-    Start-Sleep -Milliseconds 500
-    # Ctrl+Enter runs the snippet open in the editor. Idempotent -- a
-    # double-run is harmless.
-    $shell.SendKeys('^{ENTER}')
-    Start-Sleep -Milliseconds 900
-    # Close the DevTools window we opened -- the injected style/observers
-    # live in the page and survive DevTools closing.
-    $fgNow = [ClaudeRtl.Win32]::GetForegroundWindow()
-    $sbNow = New-Object System.Text.StringBuilder 512
-    [void][ClaudeRtl.Win32]::GetWindowText($fgNow, $sbNow, 512)
-    if ($sbNow.ToString() -like $DevToolsTitlePattern) {
-        $shell.SendKeys('%{F4}')
-    }
-    Write-Ok "Auto-inject sent: DevTools snippet '$SnippetName' should be running."
-    Write-Info "One-time prerequisite if nothing happened: save the snippet in DevTools as a snippet named '$SnippetName'."
-}
 
 function Invoke-InstallShortcutMode {
     # Creates two Start Menu shortcuts with Claude's own icon:

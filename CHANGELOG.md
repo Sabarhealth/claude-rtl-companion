@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed ALL synthetic input -- the tool no longer touches your desktop
+- User report: the launcher "escapes Claude's boundaries, opens other
+  things". Correct, and the root cause was structural: every UI-automation
+  path (menu navigation, DevTools driving) worked by synthesizing mouse
+  clicks at fixed coordinates and `SendKeys` keystrokes. Those go to
+  whatever window is focused at that instant -- so any focus race, slow
+  frame or stolen foreground leaked clicks and keystrokes into other
+  applications. The focus guards reduced the odds but could not remove
+  the hazard.
+- Deleted (~400 lines): `Invoke-AutoInject` (the whole DevTools
+  automation), `Enable-MainProcessDebugger`, `Invoke-NativeMenuItem`,
+  `Set-TypingTarget`, `Restore-TypingLayout`, `Find-DevToolsWindow`, the
+  DevTools title matching, and the mouse/keyboard/keyboard-layout
+  P/Invokes. Nothing in the tool now calls `SendKeys`, `mouse_event`,
+  `SetCursorPos`, `AppActivate` or `WM_INPUTLANGCHANGEREQUEST`.
+- This also permanently fixes the "keyboard stuck on English" bug: the
+  layout is never switched, so it can never be left switched.
+- Injection is CDP-only now (`scripts/cdp-inject.ps1`): a local socket
+  conversation with Electron that reaches every view at once and cannot
+  affect focus. When the main-process inspector is closed, the tool
+  prints the one-time menu step and stops instead of trying to click it.
+- Trade-off, stated plainly: enabling the inspector is now a deliberate
+  two-second user action once per Claude run (hamburger -> Developer ->
+  Enable Main Process Debugger). That is the price of never letting the
+  tool drive the desktop, and it is the right trade.
+
+### Verified on Claude 1.34493.1.0
+- Architecture unchanged from 1.30096: 8x WebContentsView/addChildView,
+  no `<webview>` tags, same `Enable Main Process Debugger` menu item,
+  same `developer_settings.json` gate. CDP injection path applies as-is.
+- `--inspect` is still ignored (flag accepted, port never opens) and
+  `process._debugProcess` is still absent from the bundle.
+
 ### NEW injection architecture: main-process inspector (CDP) -- 1.30096+
 - Claude 1.30096 rebuilt the app shell as a LOCAL Vite renderer
   (`app.asar/.vite/renderer/main_window/index.html`, verified by
