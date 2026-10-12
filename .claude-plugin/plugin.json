@@ -1,0 +1,7 @@
+{
+  "name": "claude-rtl",
+  "version": "0.1.0",
+  "description": "Applies Hebrew/RTL rendering to every Claude Desktop view with /rtl.",
+  "author": { "name": "Sabarhealth" },
+  "homepage": "https://github.com/Sabarhealth/claude-rtl-companion"
+}

@@ -1,0 +1,12 @@
+{
+  "name": "claude-rtl-companion",
+  "description": "Hebrew/RTL rendering for Claude Desktop on Windows, without patching the app.",
+  "owner": { "name": "Sabarhealth" },
+  "plugins": [
+    {
+      "name": "claude-rtl",
+      "source": "./",
+      "description": "Hebrew/RTL rendering for Claude Desktop. Adds /rtl, which applies the RTL snippet to every view."
+    }
+  ]
+}
