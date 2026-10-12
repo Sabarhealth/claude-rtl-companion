@@ -176,6 +176,26 @@ powershell -ExecutionPolicy Bypass -File .\claude-rtl.ps1 -Mode Setup
 Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 ```
 
+## Install as a plugin (adds the `/rtl` command)
+
+The repository doubles as a Claude Code plugin, so the RTL fix can be
+triggered from inside Claude instead of from a global hotkey:
+
+```
+/plugin marketplace add Sabarhealth/claude-rtl-companion
+/plugin install claude-rtl@claude-rtl-companion
+```
+
+Restart Claude Code, then run **`/rtl`** in any session. It injects the
+snippet into every Claude view and reports how many elements it tagged.
+It still needs the main-process inspector open (see below) -- when that
+is closed, `/rtl` says so and tells you how to open it.
+
+**How others get snippet updates:** the snippet ships inside the plugin,
+so `/plugin update claude-rtl` pulls the latest `inject-snippet.js`
+along with the command. Nothing to paste, nothing to copy between
+machines.
+
 ## Per-session workflow
 
 The injected CSS lives in the renderer process. When Claude is closed
