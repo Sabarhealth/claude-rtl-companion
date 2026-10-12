@@ -18,6 +18,9 @@ const INJECTOR = 'scripts/cdp-inject.ps1'
 const SNIPPET = 'scripts/inject-snippet.js'
 const TIMEOUT_MS = 120_000
 
+/** Across sessions: the snippet version the user was last told about. */
+const VERSION_KEY = 'claude-rtl:snippet-version'
+
 /** The inspector is opened by the user once per Claude run; say so plainly. */
 const ENABLE_HINT =
   'Open it once for this Claude run, then run /rtl again:\n' +
@@ -30,7 +33,31 @@ export const register: Register = on => {
       description: 'Apply Hebrew/RTL rendering to every Claude Desktop view',
     })
 
-    return next(e)
+    const started = await next(e)
+
+    // The practical workflow is DevTools + Ctrl+Enter on a SAVED copy of the
+    // snippet, and that copy goes stale silently when the snippet changes --
+    // which is the one real friction left. Nothing may type into DevTools for
+    // the user (that is what leaked input into other apps), so instead: notice
+    // the change, put the new snippet on the clipboard, and say so once.
+    try {
+      const source = await $.fs.read(`${$.plugin.root}/${SNIPPET}`)
+      const version = /snippet \((v\d+)\)/.exec(source)?.[1]
+
+      if (version && (await $.store.get(VERSION_KEY)) !== version) {
+        const { isCopied } = await $.ui.copy({ text: source })
+        $.ui.toast(
+          isCopied
+            ? `RTL snippet ${version} is on your clipboard - paste it over the saved DevTools snippet (Ctrl+A, Ctrl+V, Ctrl+S).`
+            : `RTL snippet ${version} is available; run /rtl, or re-copy it with the launcher.`,
+        )
+        await $.store.set(VERSION_KEY, version)
+      }
+    } catch {
+      // A missing or unreadable snippet must never block the session start.
+    }
+
+    return started
   })
 
   on('command.run', { command: 'rtl' }, async $ => {
