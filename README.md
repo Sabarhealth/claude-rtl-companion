@@ -11,6 +11,8 @@ feature -- not any kind of binary or `app.asar` patching.
 לקובץ הגדרות משתמש) ובמנגנון ה-Main Process Debugger שהאפליקציה מספקת.
 אחרי הגדרה חד-פעמית, בכל הפעלת Claude מפעילים את ה-debugger מהתפריט
 ולוחצים Ctrl+Alt+R. אין הקלדות או הקלקות מסונתזות.
+לגרסת הדפדפן של claude.ai יש תוסף לכרום ולאדג' עם אותם חוקים,
+והוא פועל אוטומטית בכל טעינת דף. ההתקנה מוסברת בהמשך.
 אין שינוי קוד אפליקציה, אין שבירה של חתימת MSIX, אין persistence שמסומן
 ב-AV/EDR. עדכוני Microsoft Store עוברים שקופים.
 
@@ -196,6 +198,56 @@ so `/plugin update claude-rtl` pulls the latest `inject-snippet.js`
 along with the command. Nothing to paste, nothing to copy between
 machines.
 
+## Browser extension for claude.ai (Chrome / Edge)
+
+The same rules also ship as a Chrome extension for **claude.ai in the
+browser** (chat and Claude Code on the web). `manifest.json` sits at the
+repo root and registers `scripts/inject-snippet.js` -- the exact file the
+Desktop flow injects -- as a content script on `https://claude.ai/*`. In a
+browser there is nothing to inject per session: the rules apply on every
+page load, automatically. It asks for no permissions beyond running on
+claude.ai.
+
+It does not run inside Claude Desktop (Electron does not load browser
+extensions); keep using the flow above there.
+
+### Install on each machine
+
+**A. Machines with the git clone (recommended -- updates itself):**
+
+1. `chrome://extensions` (or `edge://extensions`) -> turn on
+   **Developer mode**.
+2. **Load unpacked** -> select the repo root (`C:\dev\RTL`).
+
+Updates arrive with `git pull`, which the Desktop launcher already runs on
+every launch. Chrome re-reads an unpacked extension when the browser
+restarts; to pick up a change right away, press the reload arrow on the
+extension's card.
+
+**B. Machines without git:** build a zip on any machine that has the repo,
+
+```powershell
+.\claude-rtl.ps1 -Mode BuildExtension
+```
+
+copy `dist\claude-rtl-extension-<version>.zip` over, extract it to a folder
+that will stay put (e.g. `%LOCALAPPDATA%\ClaudeRTL`), then Developer mode ->
+**Load unpacked** -> that folder. To update, replace the folder's contents
+with a newer zip and press reload. The zip's version is
+`<snippet number>.<commit count>`, so a newer zip always has a higher one.
+(When bumping the snippet version, set `manifest.json`'s `version` to the
+same number -- `BuildExtension` refuses to build until they match. The zip
+ships exactly the files `manifest.json` references.)
+
+**C. Whole team, zero touch (not set up yet):** the same zip is
+Chrome Web Store-ready. Upload it as an *unlisted* (or domain-private)
+item, then force-install it through Intune/GPO with the
+`ExtensionInstallForcelist` policy. Browsers then install and auto-update
+it without Developer mode.
+
+If Developer mode is greyed out, an organization policy blocks unpacked
+extensions -- only option C works on that machine.
+
 ## Per-session workflow
 
 The injected CSS lives in the renderer process. When Claude is closed
@@ -278,6 +330,7 @@ Option A launch path (it delegates to `-Mode LaunchLtr`).
 | `PrintSnippet` | Prints the snippet to stdout. |
 | `LaunchLtr` | Launches Claude with `--lang=en-US --force-ui-direction=ltr` (unmirrored window chrome on Hebrew/Arabic Windows display languages -- works around the ghost preview-pane layer, see Troubleshooting), then tries to inject via CDP. If the main-process inspector is closed it prints the one-time menu step and stops. If Claude is already running with the flags it just focuses the window; if it is running WITHOUT them (the usual post-Store-update state) it restarts it. |
 | `Inject` | **Applies the RTL fix to everything** through Electron's main-process inspector (CDP): the shell, the chat session and any preview panes in one call. Needs no focus and synthesizes no input, so it is safe to trigger from any window. Requires the inspector to be enabled once per Claude run (hamburger -> Developer -> Enable Main Process Debugger); if it is closed, the mode says so and does nothing. |
+| `BuildExtension` | Packages the claude.ai browser extension (root `manifest.json` + the snippet + icons) into `dist\claude-rtl-extension-<snippet>.<commits>.zip`, for machines without git or for a Chrome Web Store upload. |
 | `InstallShortcut` | Creates two Start Menu shortcuts with Claude's icon: **"Claude (LTR)"** (silently runs `LaunchLtr` -- pin to taskbar, it IS the app icon from now on) and **"Claude RTL Inject"** (silently runs `Inject`, global hotkey **Ctrl+Alt+R**). Re-run after a Store update if the icons go generic. |
 
 All modes are non-interactive (no Y/N prompts). The `-NoConfirm` flag is
@@ -323,6 +376,9 @@ right-click → Remove) to fully clean up.
 claude-rtl-companion/
 ├── claude-rtl.ps1               main launcher (PowerShell)
 ├── Claude-RTL.cmd               one-click per-session helper
+├── manifest.json                claude.ai browser extension (MV3);
+│                                load the repo root as an unpacked extension
+├── assets/icons/                extension icons
 ├── scripts/
 │   └── inject-snippet.js        the snippet that goes into DevTools
 │                                (embeds its own CSS)

@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Claude RTL Companion",
+  "short_name": "Claude RTL",
+  "version": "19",
+  "description": "Hebrew/RTL rendering for claude.ai: per-paragraph direction, correct list markers and tables, code kept LTR.",
+  "content_scripts": [
+    {
+      "matches": ["https://claude.ai/*"],
+      "js": ["scripts/inject-snippet.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "assets/icons/icon-16.png",
+    "32": "assets/icons/icon-32.png",
+    "48": "assets/icons/icon-48.png",
+    "128": "assets/icons/icon-128.png"
+  }
+}

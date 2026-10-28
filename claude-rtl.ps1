@@ -28,6 +28,7 @@
     DisableDevMode -- remove allowDevTools from config.json.
     CopySnippet    -- copy injection snippet to clipboard + show paste steps.
     PrintSnippet   -- print the snippet to stdout.
+    BuildExtension -- package the claude.ai Chrome extension into dist\*.zip.
 
 .EXAMPLE
     .\claude-rtl.ps1 -Mode Setup
@@ -45,7 +46,7 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet('Status','Setup','EnableDevMode','DisableDevMode','CopySnippet','PrintSnippet','LaunchLtr','InstallShortcut','Inject')]
+    [ValidateSet('Status','Setup','EnableDevMode','DisableDevMode','CopySnippet','PrintSnippet','LaunchLtr','InstallShortcut','Inject','BuildExtension')]
     [string]$Mode = 'Status',
 
     # Backwards-compat: no-op. Prompts have been removed; the script always
@@ -653,6 +654,56 @@ function Invoke-InstallShortcutMode {
     Write-Warn "After a Microsoft Store update the ICONS may go generic (shortcuts keep working); re-run -Mode InstallShortcut to refresh."
 }
 
+function Invoke-BuildExtensionMode {
+    # Packages the Chrome extension (manifest.json at the repo root, content
+    # script = the same inject-snippet.js Desktop uses) into a versioned zip
+    # for machines without a git clone, or for a Chrome Web Store upload.
+    # manifest.json's version tracks the snippet number (so unpacked installs
+    # show which snippet they run); the zip appends the commit count so every
+    # store upload is strictly higher.
+    $manifest = Get-Content (Join-Path $scriptDir 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    $snippetNum = (Get-SnippetVersion) -replace '^v', ''
+    if ($manifest.version -ne $snippetNum) {
+        throw "manifest.json version '$($manifest.version)' does not match snippet v$snippetNum -- set it to `"$snippetNum`"."
+    }
+    $build = 0
+    if (Get-Command git -ErrorAction SilentlyContinue) {
+        $count = git -C $scriptDir rev-list --count HEAD 2>$null
+        if ($LASTEXITCODE -eq 0) { $build = [int]$count }
+    }
+    $version = "$snippetNum.$build"
+    $manifest.version = $version
+
+    # The manifest is the single list of what ships: every file it references.
+    $files = @($manifest.content_scripts | ForEach-Object { $_.js; $_.css }) +
+             @($manifest.icons.PSObject.Properties.Value) | Where-Object { $_ } | Sort-Object -Unique
+    foreach ($f in $files) {
+        if (-not (Test-Path (Join-Path $scriptDir $f))) { throw "manifest.json references missing file: $f" }
+    }
+
+    $dist = Join-Path $scriptDir 'dist'
+    New-Item -ItemType Directory -Force $dist | Out-Null
+    $zipPath = Join-Path $dist "claude-rtl-extension-$version.zip"
+    if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
+
+    # ZipArchive directly (not Compress-Archive): PS 5.1 writes backslash
+    # entry names, which Chrome Web Store and non-Windows unzip reject.
+    Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    $zip = [System.IO.Compression.ZipFile]::Open($zipPath, 'Create')
+    try {
+        $entry = $zip.CreateEntry('manifest.json')
+        $w = New-Object System.IO.StreamWriter ($entry.Open(), $utf8)
+        try { $w.Write(($manifest | ConvertTo-Json -Depth 10)) } finally { $w.Dispose() }
+        foreach ($f in $files) {
+            [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, (Join-Path $scriptDir $f), $f) | Out-Null
+        }
+    } finally { $zip.Dispose() }
+
+    Write-Ok "Built $zipPath (version $version)."
+    Write-Info "Install: extract to a permanent folder -> chrome://extensions -> Developer mode -> Load unpacked."
+}
+
 # ============================================================================
 # Dispatch
 # ============================================================================
@@ -666,4 +717,5 @@ switch ($Mode) {
     'LaunchLtr'      { Invoke-LaunchLtrMode }
     'InstallShortcut' { Invoke-InstallShortcutMode }
     'Inject'         { Invoke-InjectMode }
+    'BuildExtension' { Invoke-BuildExtensionMode }
 }

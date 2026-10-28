@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added: browser extension for claude.ai (Chrome / Edge)
+- `manifest.json` at the repo root turns the repo into an unpacked MV3
+  extension whose content script is `scripts/inject-snippet.js` itself --
+  one source of rules for Desktop and web, no copy to drift. Runs on
+  `https://claude.ai/*` at every page load; no extra permissions.
+- `-Mode BuildExtension` packages it into
+  `dist\claude-rtl-extension-<snippet>.<commits>.zip` (forward-slash entry
+  names) for machines without git or a Chrome Web Store upload. The file
+  list is derived from `manifest.json`; its `version` must equal the
+  snippet number (the build checks), and the zip appends the commit count.
+- Verified by loading both the repo root and the built zip into Edge:
+  the content script injected on claude.ai and tagged Hebrew paragraphs
+  and lists RTL, English LTR, code LTR. Then confirmed by the user on a
+  real signed-in claude.ai chat in Edge (loaded unpacked from the repo).
+
 ### Confirmed: Ctrl+Alt+I DOES reach the session view (1.34493)
 - User test settled the open question: with focus **inside the chat** and
   an English keyboard layout, `Ctrl+Alt+I` opens DevTools attached to
