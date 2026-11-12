@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed: the plugin is now `rtl-companion` (was `claude-rtl`)
+- Claude Code 2.1.321 and newer reserve third-party plugin names that
+  start with `claude-`, so `claude-rtl` stopped loading: `/reload-plugins`
+  reported a load error and `/rtl` was missing. The plugin name is now
+  `rtl-companion` in `.claude-plugin/plugin.json` and
+  `.claude-plugin/marketplace.json`; plugin version 0.1.0 -> 0.2.0. The
+  marketplace name `claude-rtl-companion` is unchanged.
+- **Existing users must reinstall under the new name** -- an update cannot
+  carry a rename. Steps are in the README under *Upgrading from
+  `claude-rtl`*.
+- The store key `claude-rtl:snippet-version` is kept, but the plugin store
+  is a file per plugin name, so the renamed plugin starts with an empty
+  one: the first session shows the "snippet is on your clipboard" notice
+  once more.
+- Not renamed, because they are not plugin names: `claude-rtl.ps1`, the
+  `Claude-RTL` DevTools snippet, the log file names and the
+  `<style id="claude-rtl-companion">` tag.
+
 ### Added: browser extension for claude.ai (Chrome / Edge)
 - `manifest.json` at the repo root turns the repo into an unpacked MV3
   extension whose content script is `scripts/inject-snippet.js` itself --

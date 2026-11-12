@@ -185,7 +185,7 @@ triggered from inside Claude instead of from a global hotkey:
 
 ```
 /plugin marketplace add Sabarhealth/claude-rtl-companion
-/plugin install claude-rtl@claude-rtl-companion
+/plugin install rtl-companion@claude-rtl-companion
 ```
 
 Restart Claude Code, then run **`/rtl`** in any session. It injects the
@@ -194,9 +194,29 @@ It still needs the main-process inspector open (see below) -- when that
 is closed, `/rtl` says so and tells you how to open it.
 
 **How others get snippet updates:** the snippet ships inside the plugin,
-so `/plugin update claude-rtl` pulls the latest `inject-snippet.js`
+so `/plugin update rtl-companion` pulls the latest `inject-snippet.js`
 along with the command. Nothing to paste, nothing to copy between
 machines.
+
+### Upgrading from `claude-rtl`
+
+The plugin used to be called `claude-rtl`. Claude Code 2.1.321 and newer
+reserve plugin names that start with `claude-`, so under that name the
+plugin fails to load and `/rtl` disappears. It is now `rtl-companion`
+(the marketplace is still `claude-rtl-companion`). A plugin update cannot
+carry a rename, so reinstall it once:
+
+```
+/plugin uninstall claude-rtl@claude-rtl-companion
+/plugin marketplace update claude-rtl-companion
+/plugin install rtl-companion@claude-rtl-companion
+/reload-plugins
+```
+
+The first session after the reinstall shows the "snippet is on your
+clipboard" notice once more, because the plugin's saved state is kept per
+plugin name. Nothing else changes: the launcher, the DevTools snippet and
+the browser extension keep their names.
 
 ## Browser extension for claude.ai (Chrome / Edge)
 

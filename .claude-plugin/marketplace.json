@@ -4,7 +4,7 @@
   "owner": { "name": "Sabarhealth" },
   "plugins": [
     {
-      "name": "claude-rtl",
+      "name": "rtl-companion",
       "source": "./",
       "description": "Hebrew/RTL rendering for Claude Desktop. Adds /rtl, which applies the RTL snippet to every view."
     }
