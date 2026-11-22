@@ -149,6 +149,66 @@ JSON.stringify($req.webContents.getAllWebContents().map(w => ({
     # inside each renderer.
     $snippetJson = ConvertTo-Json -InputObject $snippet -Compress
 
+    # ---------------------------------------------------------------------
+    # Persistent hook: inject every view that appears LATER, by itself.
+    #
+    # Injecting the views that exist right now covers only this moment. Claude
+    # opens new WebContentsViews constantly -- a session in its own window, a
+    # new chat, an incognito chat, a preview pane -- and each arrives after the
+    # run that injected the others, which is why new windows looked untouched.
+    #
+    # Installing an app-level 'web-contents-created' listener in the MAIN
+    # process fixes that class of problem rather than one instance of it: the
+    # listener lives as long as Claude does, so every view created from here
+    # on is injected on its own dom-ready, with nothing to re-run. dom-ready
+    # also fires again after a navigation, so a view that reloads is re-covered.
+    # ---------------------------------------------------------------------
+    $hookExpr = @"
+(() => {
+  const e = $req;
+  globalThis.__rtlSource = $snippetJson;
+
+  const run = async wc => {
+    if (!wc || wc.isDestroyed()) return;
+    const url = wc.getURL() || '';
+    if (url.startsWith('devtools://')) return;
+    let attached = false;
+    try { wc.debugger.attach('1.3'); attached = true; }
+    catch (err) { if (!wc.debugger.isAttached()) return; }
+    try {
+      await wc.debugger.sendCommand('Runtime.evaluate', {
+        expression: globalThis.__rtlSource,
+        returnByValue: true,
+        allowUnsafeEvalBlockedByCSP: true,
+      });
+    } catch (err) { /* a view that went away mid-flight is not an error */ }
+    if (attached) { try { wc.debugger.detach(); } catch (_) {} }
+  };
+
+  // Bind a view once; dom-ready repeats per navigation, which is what we want.
+  const bind = wc => {
+    if (!wc || wc.__rtlBound) return;
+    wc.__rtlBound = true;
+    wc.on('dom-ready', () => run(wc));
+  };
+
+  for (const wc of e.webContents.getAllWebContents()) bind(wc);
+
+  if (!globalThis.__rtlHooked) {
+    globalThis.__rtlHooked = true;
+    e.app.on('web-contents-created', (_ev, wc) => bind(wc));
+  }
+  return 'ok';
+})()
+"@
+    try {
+        $null = Invoke-Cdp $hookExpr
+        Write-Ok "Future views will be injected automatically (new windows, chats, previews)."
+    } catch {
+        Write-Info "Could not install the auto-inject hook: $($_.Exception.Message)"
+        Write-Info "Views open right now are still injected below; new ones will need another run."
+    }
+
     # Only real content views: skip devtools, about:blank and data: shims.
     $targetsToInject = $list | Where-Object {
         -not $_.destroyed -and $_.type -ne 'remote' -and
