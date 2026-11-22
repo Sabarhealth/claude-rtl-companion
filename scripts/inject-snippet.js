@@ -1,6 +1,14 @@
 ﻿// =============================================================================
-// Claude RTL Companion -- DevTools console snippet (v19)
+// Claude RTL Companion -- DevTools console snippet (v20)
 // =============================================================================
+// v20: covers the Hebrew text leaves the semantic tag set cannot reach -- the
+// sidebar session titles, truncated labels and chips that render as a bare
+// <span>/<div>, plus <bdi>, which Claude uses for names. The rule is narrow on
+// purpose: only a leaf whose COMPUTED direction is still ltr gets tagged. A
+// live session showed 82 Hebrew-bearing leaves, of which all but ~17 already
+// inherit RTL from an ancestor, so a blanket rule would rewrite dozens of
+// attributes every pass for no visual change. Verified on Claude 6.28899.2.0.
+//
 // v19: the title-bar pad decision is now purely GEOMETRIC. The old logic
 // padded based on locale sniffing (navigator.language), which lies under the
 // launcher's --lang=en-US and padded when it shouldn't. Now: pad
@@ -145,13 +153,17 @@ pre *, code *, .code-block__code *, [class*="code-block"] *, [class*="CodeBlock"
   // --------------------------------------------------------------------------
   const AUTO_TAGS = ['P', 'TD', 'TH', 'DT', 'DD', 'BLOCKQUOTE',
                      'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
-                     'SUMMARY', 'FIGCAPTION', 'CAPTION', 'BUTTON'];
+                     'SUMMARY', 'FIGCAPTION', 'CAPTION', 'BUTTON', 'BDI'];
   // v16: no :not([dir]) state-marker -- every pass re-evaluates all targets
   // from current content and writes only on change (see setDir).
   const AUTO_SELECTOR = AUTO_TAGS.map(t => t.toLowerCase()).join(',');
   const RTL_RX = /[֐-׿؀-ۿ܀-ݏހ-޿]/;
   const IN_CODE = 'pre, code, [class*="code-block"], [class*="CodeBlock"], ' +
                   '.epitaxy-codeblock, .epitaxy-diff';
+
+  // Elements that commonly hold a bare run of text in Claude's UI chrome.
+  // Only ones with no element child are considered (see pass 5).
+  const LEAF_SELECTOR = 'span, div, a, label, bdi, li, summary';
 
   // Claude Desktop's custom UI containers (the "epitaxy" design system).
   // These cards/rows/bubbles use <button>/<div>/<span> with custom classes
@@ -246,6 +258,24 @@ pre *, code *, .code-block__code *, [class*="code-block"] *, [class*="CodeBlock"
       for (const inp of document.querySelectorAll(INPUT_SELECTOR)) {
         if (inp.closest(IN_CODE)) continue;
         n += setDir(inp, 'auto');
+      }
+      // 5. Text leaves the tag set cannot reach: Hebrew sitting in a bare
+      //    <span>/<div> (sidebar session titles, truncated labels, chips).
+      //    Tagging every such leaf would be wrong -- measured on a live
+      //    session, 82 of them hold Hebrew but all except ~17 already inherit
+      //    RTL from an ancestor we tagged, so a blanket rule would rewrite
+      //    dozens of attributes per pass for no visual change.
+      //    So the condition is the defect itself: a leaf whose COMPUTED
+      //    direction is still ltr. getComputedStyle only runs for the few
+      //    candidates left after the cheap filters, and the set is normally
+      //    empty on later passes.
+      for (const el of document.querySelectorAll(LEAF_SELECTOR)) {
+        if (el.firstElementChild) continue;
+        if (el.getAttribute('dir') === 'rtl') continue;
+        if (!RTL_RX.test(el.textContent || '')) continue;
+        if (el.closest(IN_CODE)) continue;
+        if (getComputedStyle(el).direction !== 'ltr') continue;
+        n += setDir(el, 'rtl');
       }
     } catch (_) {}
     return n;
@@ -418,5 +448,5 @@ pre *, code *, .code-block__code *, [class*="code-block"] *, [class*="CodeBlock"
     return 'removed';
   };
 
-  return 'Claude RTL v19 applied (' + initialTagged + ' elements tagged; geometric title-bar pad, flush start-edge buttons in LTR windows). Run claudeRtlRemove() to undo.';
+  return 'Claude RTL v20 applied (' + initialTagged + ' elements tagged; sidebar titles, truncated labels and <bdi> now covered). Run claudeRtlRemove() to undo.';
 })();
