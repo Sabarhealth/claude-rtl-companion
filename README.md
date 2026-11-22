@@ -140,19 +140,19 @@ env var. To move to the current flow:
    .\claude-rtl.ps1 -Mode InstallShortcut
    ```
 
-3. In Claude's DevTools (**Sources** → **Snippets**), make sure your
-   saved snippet is named exactly `Claude-RTL` -- right-click →
-   **Rename** if you used a different name. Do NOT bother updating its
-   content: the automation re-syncs it from this repo before every run.
-
 That's the whole upgrade. You get: an unmirrored window (no ghost
 preview-pane on Hebrew/Arabic Windows), `Ctrl+Alt+R` to apply RTL to
-every view at once, and silent self-updates (the launcher git-pulls this
-repo on every launch/inject).
+every view at once -- including every window, chat, incognito chat and
+preview pane opened *afterwards*, which a main-process hook injects on
+its own -- and silent self-updates (the launcher git-pulls this repo on
+every launch/inject).
 
 Note: the DevTools snippet named `Claude-RTL` is only used by the manual
 Console fallback now -- current builds inject through the main-process
-inspector instead, straight from `scripts/inject-snippet.js`.
+inspector instead, straight from `scripts/inject-snippet.js`. Nothing
+re-syncs that saved copy for you, so if you still run it by hand, paste
+the current source over it (`-Mode CopySnippet`) when the version
+changes.
 
 If anything misbehaves: re-run `.\claude-rtl.ps1 -Mode Setup`
 (idempotent) and check `%TEMP%\claude-rtl-launch.log`.

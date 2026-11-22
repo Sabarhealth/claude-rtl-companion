@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added: future views are injected automatically (main-process hook)
+- Injecting the views that exist at the moment of a run covered only that
+  moment. Claude opens a new `WebContentsView` constantly -- a session in
+  its own window, a new chat, an incognito chat, a preview pane -- and each
+  one arrives *after* the run that injected the others, which is why
+  windows opened later looked untouched.
+- `scripts/cdp-inject.ps1` now installs an `app.on('web-contents-created')`
+  listener in the main process and binds `dom-ready` on every view. The
+  listener lives as long as Claude does, so each view created from then on
+  injects itself with nothing to re-run, and `dom-ready` firing again after
+  a navigation re-covers a view that reloaded.
+- The snippet source is parked on `globalThis.__rtlSource`, and both the
+  hook and the listener are idempotent (`__rtlBound`, `__rtlHooked`), so
+  re-running the injector does not stack duplicates.
+- Verified on Claude Desktop 6.28899.2.0: 13 webContents found, the session
+  view tagged 423 elements, three preview panes ~80 each, and a window
+  opened *after* the run came up already aligned.
+
+### Fixed: snippet v20 -- Hebrew text leaves (sidebar titles, truncated labels, `<bdi>`)
+- Chat and incognito were "not perfect": Hebrew sitting in a bare
+  `<span>`/`<div>` -- sidebar session titles, `truncate` labels, chips --
+  is unreachable from the semantic tag set, so it stayed LTR. `BDI` joined
+  `AUTO_TAGS`, and a new fifth tagging pass covers the rest.
+- The pass condition is the defect itself: a childless leaf holding Hebrew
+  whose **computed** direction is still `ltr`. Measured first on a live
+  session -- 82 leaves hold Hebrew but all except ~17 already inherit RTL
+  from a tagged ancestor, so a blanket rule would have rewritten dozens of
+  attributes per pass for no visual change. `getComputedStyle` runs only
+  for the few candidates that survive the cheap filters, and that set is
+  normally empty on later passes.
+- Measured after: LTR Hebrew leaves went from **17 to 1**, and the one left
+  is a `SCRIPT` element, which is not rendered.
+
 ### Changed: the plugin is now `rtl-companion` (was `claude-rtl`)
 - Claude Code 2.1.321 and newer reserve third-party plugin names that
   start with `claude-`, so `claude-rtl` stopped loading: `/reload-plugins`
